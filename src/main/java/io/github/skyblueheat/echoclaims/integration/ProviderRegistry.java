@@ -43,10 +43,10 @@ public final class ProviderRegistry<S> {
 
     public void register(ContentProvider<S> provider) {
         Objects.requireNonNull(provider, "provider");
-        if (frozen.get()) {
-            throw new IllegalStateException("ProviderRegistry is frozen; no further registrations allowed");
-        }
         synchronized (this) {
+            if (frozen.get()) {
+                throw new IllegalStateException("ProviderRegistry is frozen; no further registrations allowed");
+            }
             if (providers.stream().anyMatch(known -> known.providerId().equals(provider.providerId()))) {
                 throw new IllegalStateException(
                         "Provider already registered: " + provider.providerId());
@@ -65,7 +65,7 @@ public final class ProviderRegistry<S> {
         }
     }
 
-    public void freeze() {
+    public synchronized void freeze() {
         frozen.set(true);
     }
 

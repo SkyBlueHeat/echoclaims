@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -41,6 +42,69 @@ class ProviderRegistryHardeningTest {
 
         assertThrows(IllegalStateException.class,
                 () -> registry.register(new StubProvider("oraxen", 100)));
+    }
+
+    @Test
+    void lookupIsAllowedBeforeFreeze() {
+        ProviderRegistry<String> registry = new ProviderRegistry<>((id, t) -> {});
+        registry.register(new StubProvider("vanilla", 0));
+
+        Optional<IdentifiedContent> result = registry.identify("test");
+        assertTrue(result.isPresent());
+        assertFalse(registry.isFrozen());
+    }
+
+    @Test
+    void registrationIsAllowedAfterFirstLookup() {
+        ProviderRegistry<String> registry = new ProviderRegistry<>((id, t) -> {});
+        registry.register(new StubProvider("vanilla", 0));
+
+        registry.identify("test");
+
+        registry.register(new StubProvider("oraxen", 100));
+        assertEquals(2, registry.providerIds().size());
+    }
+
+    @Test
+    void concurrentRegisterAndFreezeNoRace() throws InterruptedException {
+        ProviderRegistry<String> registry = new ProviderRegistry<>((id, t) -> {});
+        registry.register(new StubProvider("vanilla", 0));
+
+        int threads = 16;
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        CountDownLatch ready = new CountDownLatch(threads);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicInteger successes = new AtomicInteger();
+        AtomicInteger failures = new AtomicInteger();
+
+        for (int i = 0; i < threads; i++) {
+            final int idx = i;
+            executor.submit(() -> {
+                ready.countDown();
+                try {
+                    start.await();
+                    if (idx == 0) {
+                        registry.freeze();
+                    } else {
+                        registry.register(new StubProvider("provider-" + idx, idx));
+                        successes.incrementAndGet();
+                    }
+                } catch (IllegalStateException e) {
+                    failures.incrementAndGet();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+        }
+
+        ready.await(5, TimeUnit.SECONDS);
+        start.countDown();
+        executor.shutdown();
+        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+
+        assertTrue(registry.isFrozen(), "registry must be frozen after concurrent test");
+        assertEquals(threads - 1, successes.get() + failures.get(),
+                "every non-freeze thread must either register or fail");
     }
 
     @Test
@@ -130,10 +194,6 @@ class ProviderRegistryHardeningTest {
         registry.identify("test");
 
         assertTrue(registry.isSuppressed("sick"));
-    }
-
-    private static void assertFalse(boolean condition) {
-        org.junit.jupiter.api.Assertions.assertFalse(condition);
     }
 
     private static class StubProvider implements ContentProvider<String> {

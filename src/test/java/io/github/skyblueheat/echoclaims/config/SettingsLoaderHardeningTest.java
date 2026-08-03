@@ -1,6 +1,8 @@
 package io.github.skyblueheat.echoclaims.config;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Map;
 
@@ -10,50 +12,79 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SettingsLoaderHardeningTest {
 
-    @Test
-    void unsafeSqliteFilePathFallsBackToDefault() {
+    // ---- SQLite filename: accepted values ----
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "echoclaims.db",
+            "echo-claims.db",
+            "echo_claims.db",
+            "claims.v1.db",
+            "a.db"
+    })
+    void safeFilenamesAreAccepted(String filename) {
         SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
-                "persistence", Map.of("sqlite-file", "../../../etc/passwd")
+                "persistence", Map.of("sqlite-file", filename)
+        )));
+
+        assertEquals(filename.strip(), result.settings().sqliteFile(),
+                "safe filename should be accepted as-is: " + filename);
+    }
+
+    // ---- SQLite filename: rejected values ----
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            ".",
+            "..",
+            "../claims.db",
+            "folder/claims.db",
+            "folder\\claims.db",
+            "/claims.db",
+            "/var/claims.db",
+            "C:\\claims.db",
+            "  ",
+            ""
+    })
+    void unsafeFilenamesFallBackToDefault(String filename) {
+        SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
+                "persistence", Map.of("sqlite-file", filename)
+        )));
+
+        assertEquals("echoclaims.db", result.settings().sqliteFile(),
+                "unsafe filename should fall back: " + filename);
+    }
+
+    @Test
+    void nullSqliteFileFallsBackToDefault() {
+        SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
+                "persistence", Map.of()
         )));
 
         assertEquals("echoclaims.db", result.settings().sqliteFile());
     }
 
     @Test
-    void sqliteFilePathWithBackslashFallsBackToDefault() {
+    void sqliteFileExceeding255CharsFallsBackToDefault() {
+        String longName = "a".repeat(256) + ".db";
         SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
-                "persistence", Map.of("sqlite-file", "..\\..\\windows\\system32")
+                "persistence", Map.of("sqlite-file", longName)
         )));
 
         assertEquals("echoclaims.db", result.settings().sqliteFile());
     }
 
     @Test
-    void sqliteFilePathWithSlashFallsBackToDefault() {
+    void sqliteFileAt255CharsIsAccepted() {
+        String maxName = "a".repeat(251) + ".db";
         SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
-                "persistence", Map.of("sqlite-file", "subdir/data.db")
+                "persistence", Map.of("sqlite-file", maxName)
         )));
 
-        assertEquals("echoclaims.db", result.settings().sqliteFile());
+        assertEquals(maxName, result.settings().sqliteFile());
     }
 
-    @Test
-    void blankSqliteFilePathFallsBackToDefault() {
-        SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
-                "persistence", Map.of("sqlite-file", "   ")
-        )));
-
-        assertEquals("echoclaims.db", result.settings().sqliteFile());
-    }
-
-    @Test
-    void dotSqliteFilePathFallsBackToDefault() {
-        SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
-                "persistence", Map.of("sqlite-file", ".")
-        )));
-
-        assertEquals("echoclaims.db", result.settings().sqliteFile());
-    }
+    // ---- Locale validation ----
 
     @Test
     void invalidLocaleFallsBackToEnglish() {
@@ -73,6 +104,17 @@ class SettingsLoaderHardeningTest {
         assertEquals("en", result.settings().locale());
         assertTrue(result.hasWarnings());
     }
+
+    @Test
+    void nullLocaleFallsBackToEnglish() {
+        SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
+                "locale", ""
+        )));
+
+        assertEquals("en", result.settings().locale());
+    }
+
+    // ---- Numeric clamping ----
 
     @Test
     void extremeQueueCapacityIsClamped() {
@@ -127,6 +169,8 @@ class SettingsLoaderHardeningTest {
         assertEquals(1000, result.settings().writeBatchSize());
     }
 
+    // ---- Other config validation ----
+
     @Test
     void malformedScoringMapIsIgnored() {
         SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
@@ -158,14 +202,5 @@ class SettingsLoaderHardeningTest {
 
         assertFalse(result.settings().debugLogging());
         assertTrue(result.hasWarnings());
-    }
-
-    @Test
-    void nullLocaleFallsBackToEnglish() {
-        SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
-                "locale", ""
-        )));
-
-        assertEquals("en", result.settings().locale());
     }
 }

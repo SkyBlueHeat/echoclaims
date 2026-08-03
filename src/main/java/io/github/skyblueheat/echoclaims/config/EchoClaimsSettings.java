@@ -5,6 +5,7 @@ import io.github.skyblueheat.echoclaims.domain.item.ItemScoreWeights;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Objects;
+import java.nio.file.Path;
 
 public record EchoClaimsSettings(
         String locale,
@@ -38,13 +39,17 @@ public record EchoClaimsSettings(
             return fallback;
         }
         String stripped = value.strip();
-        if (stripped.contains("/") || stripped.contains("\\") || stripped.contains("..")) {
+        if (stripped.length() > 255) {
             return fallback;
         }
-        if (stripped.equals(".") || stripped.equals("-") || stripped.length() > 255) {
+        String fileName = Path.of(stripped).getFileName().toString();
+        if (!fileName.equals(stripped)) {
             return fallback;
         }
-        return stripped;
+        if (fileName.isBlank() || fileName.equals(".") || fileName.equals("..")) {
+            return fallback;
+        }
+        return fileName;
     }
 
     public static EchoClaimsSettings defaults() {

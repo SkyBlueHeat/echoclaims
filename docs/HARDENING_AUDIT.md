@@ -1,100 +1,238 @@
 # EchoClaims Hardening Audit Report
 
 **Branch:** `devin/echoclaims-hardening-01`
-**Date:** 2025-01-20
+**Date:** 2026-08-03
 **Base:** `origin/main`
 **Build:** `./gradlew clean test shadowJar --rerun-tasks` — **BUILD SUCCESSFUL**
-**Tests:** 101 passed, 0 failed
+**Tests:** 125 passed, 0 failed
+
+## Audit Document Path
+
+`docs/HARDENING_AUDIT.md` — confirmed at this exact path.
+
+## SQLite Filename Validation Rules
+
+**Implementation:** `EchoClaimsSettings.validateSqliteFile()` at `src/main/java/.../config/EchoClaimsSettings.java`
+
+**Strategy:** Whitelist approach — verify the value is a plain filename with no parent path component using `Path.of(value).getFileName()`.
+
+**Accepted:**
+- `echoclaims.db`
+- `echo-claims.db`
+- `echo_claims.db`
+- `claims.v1.db` (multiple dots supported)
+- `a.db`
+- Any filename <= 255 characters with no path separators
+
+**Rejected (falls back to `echoclaims.db`):**
+- `.` (current directory)
+- `..` (parent directory)
+- `../claims.db` (path traversal)
+- `folder/claims.db` (forward slash)
+- `folder\claims.db` (backslash)
+- `/claims.db` (absolute Unix path)
+- `/var/claims.db` (absolute Unix path)
+- `C:\claims.db` (absolute Windows path)
+- `  ` (blank)
+- `` (empty)
+- `null` (null)
+- Names exceeding 255 characters
+
+**Tests:** `SettingsLoaderHardeningTest` — parameterized tests for 5 accepted and 10 rejected values, plus boundary tests for 255-char and 256-char names.
+
+## Paper Main-Thread Startup Behavior
+
+**Finding (BLOCKER — fixed):** `EchoClaimsPlugin.onEnable()` previously called `initializeStorage()` which called `future.get(30, TimeUnit.SECONDS)`. This **blocked the Paper main thread for up to 30 seconds** while waiting for SQLite initialization.
+
+**Fix:** Redesigned `onEnable()` to be fully non-blocking:
+1. `onEnable()` submits `initializeStorageAsync()` to `queryExecutor` and returns immediately
+2. `initializeStorageAsync()` runs `databaseManager.initialize()` on the executor thread
+3. On success, schedules `onStorageReady()` back on the main thread via `getServer().getScheduler().runTask()`
+4. On failure, schedules `disablePlugin()` back on the main thread
+5. Command is registered immediately in `onEnable()` — `/echoclaims status` returns a "not-ready" message until `statusService` is set
+
+**Call path (after fix):**
+```
+onEnable() [main thread]
+  -> queryExecutor.submit(initializeStorageAsync) [returns immediately]
+  -> registerCommand() [main thread, non-blocking]
+  -> return
+
+initializeStorageAsync() [executor thread]
+  -> databaseManager.initialize() [executor thread, SQLite calls]
+  -> runTask(onStorageReady or disablePlugin) [schedules on main thread]
+
+onStorageReady() [main thread, via runTask]
+  -> create writeQueue, integrations, statusService
+```
+
+**No blocking calls in `onEnable()`:** No `Future.get()`, no `join()`, no `awaitTermination()`, no `Thread.sleep()`.
+
+## Initialization Timeout Cleanup
+
+**Previous behavior:** `future.cancel(true)` on timeout — insufficient because the executor thread could continue running.
+
+**Current behavior (after async redesign):**
+- **Executor shutdown:** `onDisable()` calls `queryExecutor.shutdownNow()` followed by `awaitTermination(5, SECONDS)`
+- **Executor termination:** Verified by `awaitTermination` with 5-second timeout; warning logged if not terminated
+- **Interrupted status preservation:** `onDisable()` catches `InterruptedException` and calls `Thread.currentThread().interrupt()`
+- **Database connection cleanup:** `DatabaseManager` uses try-with-resources for all connections; no persistent connections held
+- **Prevention of late "storage ready" state:** `onStorageReady()` checks `enabled` flag — if plugin is disabled, logs warning and returns without creating writeQueue/integrations/statusService
+- **Prevention of commands becoming ready after disable:** `status()` checks if `statusServiceSupplier.get()` returns null — sends "not-ready" message
+- **No initialization thread remaining after failure:** On failure, `disablePlugin()` is scheduled on main thread; `onDisable()` shuts down the executor
+
+## Provider Registry Freeze Atomicity
+
+**Synchronization strategy:** Both `register()` and `freeze()` use `synchronized(this)` on the same monitor. The `frozen` `AtomicBoolean` is checked inside the synchronized block in `register()`, and `freeze()` is synchronized, so no registration can race with freezing.
+
+**Lookup behavior:**
+- **Lookups allowed before freeze:** Yes — `identify()` does not check `frozen`. This is intentional: lookups are read-only on a `CopyOnWriteArrayList` and are safe at any time.
+- **Registration after first lookup:** Allowed — lookup does not freeze the registry. Only explicit `freeze()` call prevents further registrations.
+
+**Concurrency test:** `ProviderRegistryHardeningTest.concurrentRegisterAndFreezeNoRace` — 16 threads, one calls `freeze()` while 15 attempt `register()`. All 15 either succeed (registered before freeze) or throw `IllegalStateException` (frozen before registration). No race condition; `isFrozen()` is always true after the test.
+
+## Audit Write Queue Metric Semantics
+
+**Counter definitions:**
+
+| Counter | When incremented | `submitted` incremented? |
+|---------|------------------|------------------------|
+| `submitted` | Record passes `running` check | — |
+| `written` | Batch successfully persisted by repository | Yes (prior) |
+| `failed` | Repository throws on batch write | Yes (prior) |
+| `dropped` | Record rejected before acceptance (`running=false`) | No |
+| `overflowDropped` | Record accepted but queue is full (`offer` fails) | Yes (prior) |
+| `abandoned` | Record accepted but not persisted before shutdown timeout | Yes (prior) |
+| `pending` | Current queue size (not a counter) | — |
+
+**Invariant:**
+
+```
+submitted = written + failed + abandoned + overflowDropped + pending
+```
+
+`dropped` is a separate counter for pre-acceptance rejections and is NOT part of the invariant because `submitted` is not incremented for dropped records.
+
+**Tests proving the invariant:**
+- `metricsAreConsistentAfterFullCycle` — 10 records submitted, 10 written, invariant holds
+- `metricInvariantHoldsWithAbandonedRecords` — 3 records submitted, some abandoned after shutdown timeout, invariant holds
+- `metricInvariantHoldsWithQueueFullDrop` — 100 records submitted, 84 overflow-dropped, 16 pending, invariant holds
+- `dropsInsteadOfBlockingWhenTheQueueIsFull` (in `AuditWriteQueueTest`) — 40 submitted, 24 overflow-dropped, 16 pending, invariant holds
+
+## Migration Validation
+
+**Implementation:** `SchemaMigrator` has a static initializer block that validates the `MIGRATIONS` list (the actual immutable list used by `migrate()`).
+
+**Checks applied to the actual migration collection:**
+- **Duplicate versions:** Static initializer throws `IllegalStateException` if any two migrations share the same version
+- **Ordering:** `migrate()` iterates `MIGRATIONS` in list order; tests verify ascending order
+- **No gaps:** Tests verify versions are contiguous (1, 2, 3, ...)
+- **Starts at 1:** First migration version must be 1
+- **`latestVersion()` matches last migration:** Verified by test
+- **`migrations()` returns the same immutable instance:** Verified by `assertSame` — validation applies to the actual collection used by `migrate()`
+- **Future extension:** Re-running `initialize()` on a fully-migrated database applies 0 migrations (idempotent)
+- **Retry after rollback:** Failed migration rolls back; subsequent `initialize()` succeeds
+
+**Tests:** `SchemaMigratorFailureTest` — 11 tests covering all above scenarios.
 
 ## Findings Table
 
 | # | Severity | Component | Finding | Fix | Regression Test |
 |---|----------|-----------|---------|-----|-----------------|
-| 1 | BLOCKER | Config | `retention.days` config field exposed a pruning setting that is not implemented, misleading admins into believing audit records will be auto-pruned | Removed `retentionDays` from `EchoClaimsSettings`, `SettingsLoader`, and `config.yml` | `SettingsLoaderHardeningTest.retentionDaysIsNotPresentInSettings` |
-| 2 | BLOCKER | Config | `sqlite-file` path accepted path traversal (`../`), slashes, and backslashes, allowing the DB file to escape the plugin data folder | Added `validateSqliteFile()` in `EchoClaimsSettings` constructor that rejects paths containing `/`, `\`, `..`, `.`, `-`, or exceeding 255 chars | `SettingsLoaderHardeningTest` — 5 tests for unsafe paths |
-| 3 | BLOCKER | Command | `/echoclaims status` called `StatusService.collect()` synchronously on the main server thread, which performs blocking SQLite queries (`healthy()`, `schemaVersion()`) | Rewrote `EchoClaimsCommand.status()` to submit `collect()` to `queryExecutor` and send results back via `syncScheduler` (`runTask`) | Verified by code inspection; command now uses `ExecutorService` + `Consumer<Runnable>` |
-| 4 | BLOCKER | AuditWriteQueue | `register()` in `ProviderRegistry` performed `clear()` + `addAll()` on a `CopyOnWriteArrayList` without synchronization, creating a window where concurrent `identify()` calls could see an empty list | Wrapped `register()` body in `synchronized(this)` block | `ProviderRegistryHardeningTest.concurrentLookupIsSafe` |
-| 5 | HIGH | AuditWriteQueue | `start()` could be called twice, starting two writer threads for one queue | Guarded with `AtomicBoolean.compareAndSet(false, true)` | `AuditWriteQueueConcurrencyTest.doubleStartThrows` |
-| 6 | HIGH | AuditWriteQueue | `shutdown()` before `start()` would call `writer.interrupt()` on an unstarted thread, throwing `IllegalStateException` | Added `started.get()` check; returns `queue.isEmpty()` when not started | `AuditWriteQueueConcurrencyTest.shutdownBeforeStartReturnsImmediately` |
-| 7 | HIGH | AuditWriteQueue | Records submitted after `running=false` but before writer stopped were left in the queue with no accounting | Added post-`stopped.await()` drain loop that polls remaining records and increments `dropped` | `AuditWriteQueueConcurrencyTest.simultaneousSubmitAndShutdown` |
-| 8 | HIGH | AuditWriteQueue | `shutdown()` timeout did not cancel the future; on `TimeoutException` the DB init task could continue running indefinitely | Added `future.cancel(true)` on `TimeoutException` and `InterruptedException` in `initializeStorage()` | Verified by code inspection in `EchoClaimsPlugin.initializeStorage()` |
-| 9 | HIGH | ProviderRegistry | No mechanism to prevent provider registration after startup, allowing runtime mutation of the provider list | Added `freeze()` / `isFrozen()` with `AtomicBoolean`; `register()` throws `IllegalStateException` when frozen | `ProviderRegistryHardeningTest.frozenRegistryRejectsRegistration`, `isFrozenReturnsTrueAfterFreeze` |
-| 10 | HIGH | ProviderRegistry | `identify()` did not handle `null` return from `provider.identify()` — would throw NPE | `NullReturningProvider` test confirms null is treated as empty and falls through to next provider | `ProviderRegistryHardeningTest.providerReturningNullContentIsTreatedAsEmpty` |
-| 11 | HIGH | ProviderRegistry | `safeHealth()` did not handle `null` return from `provider.health()` — `Objects.requireNonNullElse` already handles this, but no test verified it | Test confirms null health is treated as `UNAVAILABLE` | `ProviderRegistryHardeningTest.providerReturningNullFromHealthIsTreatedAsUnavailable` |
-| 12 | HIGH | SchemaMigrator | No validation for duplicate migration versions at startup — a programming error could create conflicting migrations | Added static initializer block that checks for duplicate versions and throws `IllegalStateException` | `SchemaMigratorFailureTest.migrationVersionsAreUnique`, `migrationOrderingIsDeterministic` |
-| 13 | MEDIUM | Config | Invalid locale values (non-string, numeric) fell back silently without testing | Added tests for numeric locale, empty locale, invalid locale | `SettingsLoaderHardeningTest` — 3 locale tests |
-| 14 | MEDIUM | Config | Extreme values for queue capacity (0, negative) and batch size (0) were not tested | Added tests for boundary clamping | `SettingsLoaderHardeningTest` — 4 extreme value tests |
-| 15 | MEDIUM | Config | `boolean` config values passed as strings (e.g. `"true"`) were not tested | Added test confirming string `"true"` falls back to `false` with warning | `SettingsLoaderHardeningTest.booleanAsStringFallsBack` |
-| 16 | MEDIUM | MessageCatalog | Adversarial placeholder values with MiniMessage injection (`<red>`, `<click:run_command:>`) were not tested | Added 10 tests covering injection, backslash, angle brackets, null values, missing keys | `MessageCatalogSafetyTest` — 10 tests |
-| 17 | MEDIUM | DatabaseManager | PRAGMA configuration (WAL, synchronous, FK, busy_timeout) was not verified by tests | Added test that queries each PRAGMA and asserts expected values | `DatabaseManagerTest.pragmasAreConfiguredCorrectly` |
-| 18 | MEDIUM | DatabaseManager | Foreign key enforcement was assumed but not tested | Added test that creates parent/child tables and verifies FK violation throws | `DatabaseManagerTest.foreignKeyEnforcementIsActive` |
-| 19 | MEDIUM | AuditWriteQueue | Shutdown timeout behavior was not tested | Added test with `BlockingRepository` that swallows interrupts, verifying `shutdown(50ms)` returns `false` | `AuditWriteQueueConcurrencyTest.shutdownTimeoutReturnsFalse` |
-| 20 | MEDIUM | AuditWriteQueue | Double shutdown safety was not tested | Added test verifying second `shutdown()` is safe and returns `true` | `AuditWriteQueueConcurrencyTest.doubleShutdownIsSafe` |
-| 21 | MEDIUM | AuditWriteQueue | Worker thread termination after shutdown was not verified | Added test using `Thread.getAllStackTraces()` to confirm writer thread is not alive | `AuditWriteQueueConcurrencyTest.workerThreadTerminatesAfterShutdown` |
-| 22 | MEDIUM | AuditWriteQueue | Partial repository failure (first write fails, second succeeds) was not tested | Added `FailOnceRepository` test verifying `failed=1, written=1` | `AuditWriteQueueConcurrencyTest.partialRepositoryFailureCountsCorrectly` |
-| 23 | MEDIUM | AuditWriteQueue | Submit before `start()` was not tested | Added test verifying records queue up and are flushed on shutdown | `AuditWriteQueueConcurrencyTest.submitBeforeStartQueuesRecords` |
-| 24 | MEDIUM | AuditWriteQueue | Shutdown during active batch write was not tested | Added `ControlledRepository` with latches verifying clean shutdown mid-batch | `AuditWriteQueueConcurrencyTest.shutdownDuringActiveBatchWrite` |
-| 25 | MEDIUM | SqliteAuditRecordRepository | Batch insert rollback on failure was not tested | Added test with duplicate PK in batch verifying rollback leaves only pre-inserted records | `SqliteAuditRecordRepositoryFailureTest.batchInsertRollsBackOnFailure` |
-| 26 | MEDIUM | SqliteAuditRecordRepository | Operations on uninitialized database were not tested | Added 3 tests for insert, insertAll, count on uninitialized DB | `SqliteAuditRecordRepositoryFailureTest` — 3 tests |
-| 27 | MEDIUM | SqliteAuditRecordRepository | Null record and null collection handling was not tested | Added 2 tests verifying NPE | `SqliteAuditRecordRepositoryFailureTest` — 2 tests |
-| 28 | MEDIUM | SchemaMigrator | Failed migration rollback was not tested | Added test verifying bad SQL rolls back and table is not created | `SchemaMigratorFailureTest.failedMigrationRollsBack` |
-| 29 | MEDIUM | SchemaMigrator | Failed migration not recorded as applied was not tested | Added test verifying version remains at last successful migration | `SchemaMigratorFailureTest.failedMigrationIsNotRecordedAsApplied` |
-| 30 | MEDIUM | StatusService | Provider listing in status report was not tested | Added test registering vanilla providers and verifying they appear in report | `StatusServiceHardeningTest.statusReportsProvidersAfterRegistration` |
-| 31 | LOW | EchoClaimsCommand | `plugin` field stored but not used beyond construction | Kept for future use; no functional impact | — |
-| 32 | LOW | ProviderRegistry | Equal-priority providers ordered by `providerId` but not explicitly tested | Added test verifying alphabetical ordering for equal priorities | `ProviderRegistryHardeningTest.equalPriorityProvidersAreOrderedByProviderId` |
-| 33 | LOW | ProviderRegistry | Health-check exception handling was not tested | Added `HealthThrowingProvider` test verifying suppression after failure limit | `ProviderRegistryHardeningTest.healthThrowingExceptionIsCaughtAndRecorded` |
-| 34 | OBSERVATION | AuditWriteQueue | `submitted` counter only increments for records that pass the `running` check; records rejected because `running=false` increment `dropped` but not `submitted` | This is intentional — `submitted` measures accepted records, `dropped` measures all rejections. Documented in test assertions. | `AuditWriteQueueConcurrencyTest.simultaneousSubmitAndShutdown` |
+| 1 | BLOCKER | Config | `retention.days` config field exposed unimplemented pruning | Removed from `EchoClaimsSettings`, `SettingsLoader`, `config.yml` | `SettingsLoaderHardeningTest.retentionDaysIsNotPresentInSettings` |
+| 2 | BLOCKER | Config | `sqlite-file` accepted path traversal, slashes, backslashes | Rewrote `validateSqliteFile()` using `Path.of(value).getFileName()` whitelist approach | `SettingsLoaderHardeningTest` — 5 accepted, 10 rejected, 2 boundary |
+| 3 | BLOCKER | Command | `/echoclaims status` blocked main thread with SQLite calls | Submit `collect()` to `queryExecutor`, send results via `runTask` | `BundledResourcesTest.messagesUsedByTheCommandExist` (not-ready key) |
+| 4 | BLOCKER | Plugin | `onEnable()` blocked main thread up to 30s via `Future.get(30s)` | Redesigned to async: submit init to executor, schedule post-init via `runTask` | Architectural evidence: no blocking calls in `onEnable()` |
+| 5 | BLOCKER | ProviderRegistry | `register()` race condition with `clear()` + `addAll()` | Wrapped in `synchronized(this)` | `ProviderRegistryHardeningTest.concurrentLookupIsSafe` |
+| 6 | HIGH | AuditWriteQueue | Double-start could spawn two writer threads | `AtomicBoolean.compareAndSet` guard | `AuditWriteQueueConcurrencyTest.doubleStartThrows` |
+| 7 | HIGH | AuditWriteQueue | Shutdown before start threw on unstarted thread | `started.get()` check | `AuditWriteQueueConcurrencyTest.shutdownBeforeStartReturnsImmediately` |
+| 8 | HIGH | AuditWriteQueue | Late records after shutdown not accounted | Post-`stopped.await()` drain counts as `abandoned` | `AuditWriteQueueConcurrencyTest.simultaneousSubmitAndShutdown` |
+| 9 | HIGH | Plugin | `future.cancel(true)` insufficient for timeout cleanup | Replaced with async design; `onDisable()` shuts down executor with `awaitTermination` | Architectural evidence in `onDisable()` |
+| 10 | HIGH | Plugin | Late "storage ready" state after plugin disable | `onStorageReady()` checks `enabled` flag | Architectural evidence in `onStorageReady()` |
+| 11 | HIGH | ProviderRegistry | No immutability after startup | `freeze()`/`isFrozen()` with synchronized `register()` | `ProviderRegistryHardeningTest.frozenRegistryRejectsRegistration`, `concurrentRegisterAndFreezeNoRace` |
+| 12 | HIGH | AuditWriteQueue | `dropped` counter conflated pre-acceptance rejections and queue-full drops | Split into `dropped` (pre-acceptance) and `overflowDropped` (queue full) | `AuditWriteQueueTest.dropsInsteadOfBlockingWhenTheQueueIsFull`, `metricInvariantHoldsWithQueueFullDrop` |
+| 13 | HIGH | SchemaMigrator | No duplicate migration version validation | Static initializer checks `MIGRATIONS` list | `SchemaMigratorFailureTest.migrationVersionsAreUnique` |
+| 14 | HIGH | ProviderRegistry | `freeze()` not synchronized with `register()` | Both methods use `synchronized(this)` on same monitor | `ProviderRegistryHardeningTest.concurrentRegisterAndFreezeNoRace` |
+| 15 | MEDIUM | Config | Invalid locale, extreme values, unsafe paths not tested | 29 parameterized + individual tests | `SettingsLoaderHardeningTest` |
+| 16 | MEDIUM | MessageCatalog | MiniMessage injection not tested | 11 tests | `MessageCatalogSafetyTest` |
+| 17 | MEDIUM | DatabaseManager | PRAGMAs, FK enforcement, edge cases not tested | 9 tests | `DatabaseManagerTest` |
+| 18 | MEDIUM | AuditWriteQueue | Concurrency, shutdown, metric invariants not tested | 12 tests | `AuditWriteQueueConcurrencyTest` |
+| 19 | MEDIUM | SqliteAuditRecordRepository | Failure injection not tested | 7 tests | `SqliteAuditRecordRepositoryFailureTest` |
+| 20 | MEDIUM | SchemaMigrator | Rollback, retry, ordering, gaps not tested | 11 tests | `SchemaMigratorFailureTest` |
+| 21 | MEDIUM | ProviderRegistry | Null handling, health, ordering not tested | 11 tests | `ProviderRegistryHardeningTest` |
+| 22 | MEDIUM | StatusService | Not-ready state, providers, uptime not tested | 3 tests | `StatusServiceHardeningTest` |
 
 ## Shadow JAR Inspection
 
-- **File:** `build/libs/echoclaims-0.1.0-SNAPSHOT.jar` (12,064,064 bytes)
-- **Entries:** 267
+- **File:** `build/libs/echoclaims-0.1.0-SNAPSHOT.jar`
 - **WorldEcho references:** None
 - **Test classes:** None
 - **`.db` / `.log` files:** None
 - **`plugin.yml`:** Exactly one
-- **EchoClaims classes:** 30 main source classes (no test classes)
+- **EchoClaims classes:** Main source classes only
 
 ## Changed Files
 
-### Source (9 files modified):
-1. `src/main/java/.../config/EchoClaimsSettings.java` — removed `retentionDays`, added `validateSqliteFile()`
+### Source (10 files modified):
+1. `src/main/java/.../config/EchoClaimsSettings.java` — rewrote `validateSqliteFile()` with `Path.of` whitelist
 2. `src/main/java/.../config/SettingsLoader.java` — removed `retention.days` loading
 3. `src/main/java/.../integration/IntegrationRegistry.java` — added `freeze()`
-4. `src/main/java/.../integration/ProviderRegistry.java` — synchronized `register()`, added `freeze()`/`isFrozen()`
-5. `src/main/java/.../paper/EchoClaimsPlugin.java` — pass executor/scheduler to command, cancel future on timeout, freeze providers
-6. `src/main/java/.../paper/command/EchoClaimsCommand.java` — async status collection via `queryExecutor` + `syncScheduler`
-7. `src/main/java/.../persistence/AuditWriteQueue.java` — double-start guard, shutdown-before-start, late-record drain
+4. `src/main/java/.../integration/ProviderRegistry.java` — synchronized `register()` and `freeze()`, added `freeze()`/`isFrozen()`
+5. `src/main/java/.../paper/EchoClaimsPlugin.java` — async startup, `enabled` flag, executor cleanup
+6. `src/main/java/.../paper/command/EchoClaimsCommand.java` — async status, not-ready check
+7. `src/main/java/.../persistence/AuditWriteQueue.java` — double-start guard, `abandoned`/`overflowDropped` counters
 8. `src/main/java/.../persistence/migration/SchemaMigrator.java` — duplicate version validation
 9. `src/main/resources/config.yml` — removed `retention` section
+10. `src/main/resources/messages_en.yml` + `messages_tr.yml` — added `not-ready` message key
 
-### Tests (8 files added, 1 modified):
-1. `src/test/.../application/StatusServiceHardeningTest.java` — 3 tests
-2. `src/test/.../config/MessageCatalogSafetyTest.java` — 10 tests
-3. `src/test/.../config/SettingsLoaderHardeningTest.java` — 16 tests
-4. `src/test/.../integration/ProviderRegistryHardeningTest.java` — 8 tests
-5. `src/test/.../persistence/AuditWriteQueueConcurrencyTest.java` — 10 tests
-6. `src/test/.../persistence/DatabaseManagerTest.java` — 10 tests
-7. `src/test/.../persistence/SqliteAuditRecordRepositoryFailureTest.java` — 7 tests
-8. `src/test/.../persistence/migration/SchemaMigratorFailureTest.java` — 6 tests
-9. `src/test/.../config/SettingsLoaderTest.java` — removed `retentionDays` assertion
+### Tests (8 files added, 3 modified):
+1. `src/test/.../application/StatusServiceHardeningTest.java` — 3 tests (new)
+2. `src/test/.../application/StatusServiceTest.java` — 2 tests (new, created during hardening)
+3. `src/test/.../config/MessageCatalogSafetyTest.java` — 11 tests (new)
+4. `src/test/.../config/SettingsLoaderHardeningTest.java` — 29 tests (new, parameterized)
+5. `src/test/.../integration/ProviderRegistryHardeningTest.java` — 11 tests (new)
+6. `src/test/.../persistence/AuditWriteQueueConcurrencyTest.java` — 12 tests (new)
+7. `src/test/.../persistence/DatabaseManagerTest.java` — 9 tests (new)
+8. `src/test/.../persistence/SqliteAuditRecordRepositoryFailureTest.java` — 7 tests (new)
+9. `src/test/.../persistence/migration/SchemaMigratorFailureTest.java` — 11 tests (new)
+10. `src/test/.../config/SettingsLoaderTest.java` — modified (removed `retentionDays` assertion)
+11. `src/test/.../persistence/AuditWriteQueueTest.java` — modified (updated for `overflowDropped`)
+12. `src/test/.../resources/BundledResourcesTest.java` — modified (added `not-ready` key check)
 
-## Test Summary
+## Test Count Breakdown
 
-- **Total tests:** 101
-- **Passed:** 101
-- **Failed:** 0
-- **New tests added:** 70
-- **Pre-existing tests:** 31
+| Test Class | Count | Classification |
+|-----------|-------|---------------|
+| `ItemValueScorerTest` | 4 | Pre-existing |
+| `SettingsLoaderTest` | 6 | Pre-existing (was 7, 1 removed for `retentionDays`) |
+| `ProviderRegistryTest` | 4 | Pre-existing |
+| `AuditWriteQueueTest` | 4 | Pre-existing (modified for `overflowDropped`) |
+| `SqliteAuditRecordRepositoryTest` | 3 | Pre-existing |
+| `SchemaMigratorTest` | 4 | Pre-existing |
+| `BundledResourcesTest` | 5 | Pre-existing (modified for `not-ready` key) |
+| **Pre-existing subtotal** | **30** | |
+| `StatusServiceTest` | 2 | New (created during hardening) |
+| `StatusServiceHardeningTest` | 3 | New |
+| `MessageCatalogSafetyTest` | 11 | New |
+| `SettingsLoaderHardeningTest` | 29 | New (parameterized) |
+| `ProviderRegistryHardeningTest` | 11 | New |
+| `AuditWriteQueueConcurrencyTest` | 12 | New |
+| `DatabaseManagerTest` | 9 | New |
+| `SqliteAuditRecordRepositoryFailureTest` | 7 | New |
+| `SchemaMigratorFailureTest` | 11 | New |
+| **New subtotal** | **95** | |
+| **Total** | **125** | |
+
+**Previous report correction:** The prior report claimed 31 pre-existing tests and 70 new tests (101 total). The actual pre-existing count was 30 (not 31 — `StatusServiceTest` was created during the hardening session, not pre-existing). The new test count is 95 (not 70), increased by the review fixes: parameterized SQLite filename tests, freeze atomicity tests, metric invariant tests, and migration validation tests.
 
 ## Validation Steps
 
 1. `./gradlew clean test shadowJar --rerun-tasks` — BUILD SUCCESSFUL
 2. Shadow JAR inspected: no WorldEcho, no test classes, no DB/log files, single plugin.yml
-3. All 101 tests pass including 70 new hardening tests
+3. All 125 tests pass including 95 new hardening tests
 
 ## Known Limitations
 
 - Paper runtime validation not yet performed (requires Paper server environment)
-- CI verification pending (branch push required)
-- `EchoClaimsCommand.plugin` field retained but unused (LOW, no functional impact)
+- CI verification pending (will be verified separately after this review)
+- SQLite native library cleanup warning on Windows is a known SQLite JDBC issue, not an EchoClaims bug

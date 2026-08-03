@@ -31,6 +31,8 @@ class AuditWriteQueueTest {
         assertEquals(50, repository.stored.size());
         assertEquals(50, queue.status().written());
         assertEquals(0, queue.status().dropped());
+        assertEquals(0, queue.status().overflowDropped());
+        assertEquals(0, queue.status().abandoned());
     }
 
     @Test
@@ -45,9 +47,17 @@ class AuditWriteQueueTest {
             }
         }
 
+        AuditWriteQueue.QueueStatus status = queue.status();
         assertEquals(16, accepted);
-        assertEquals(24, queue.status().dropped());
-        assertEquals(16, queue.status().pending());
+        assertEquals(0, status.dropped(), "dropped should only count pre-acceptance rejections");
+        assertEquals(24, status.overflowDropped(), "overflowDropped should count queue-full drops");
+        assertEquals(16, status.pending());
+
+        // Invariant: submitted = written + failed + abandoned + overflowDropped + pending
+        assertEquals(status.submitted(),
+                status.written() + status.failed() + status.abandoned()
+                        + status.overflowDropped() + status.pending(),
+                "submitted must equal written + failed + abandoned + overflowDropped + pending");
     }
 
     @Test

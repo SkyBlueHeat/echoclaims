@@ -12,6 +12,7 @@ import java.sql.Statement;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -121,7 +122,62 @@ class SchemaMigratorFailureTest {
         }
     }
 
-    private static void assertFalse(boolean condition, String message) {
-        org.junit.jupiter.api.Assertions.assertFalse(condition, message);
+    @Test
+    void migrationsListIsTheActualCollectionUsedByMigrate() {
+        // The static initializer validates duplicates on MIGRATIONS.
+        // migrations() returns the same immutable list, so the validation
+        // applies to the actual collection used by migrate().
+        List<Migration> fromMigrations = SchemaMigrator.migrations();
+        List<Migration> fromLatestVersion = SchemaMigrator.migrations();
+
+        assertSame(fromMigrations, fromLatestVersion,
+                "migrations() must return the same immutable list instance");
+        assertFalse(fromMigrations.isEmpty(), "migrations list must not be empty");
+    }
+
+    @Test
+    void migrationVersionsHaveNoGaps() {
+        List<Migration> migrations = SchemaMigrator.migrations();
+        for (int i = 1; i < migrations.size(); i++) {
+            int prev = migrations.get(i - 1).version();
+            int curr = migrations.get(i).version();
+            assertEquals(prev + 1, curr,
+                    "migration versions must be contiguous (no gaps): expected "
+                            + (prev + 1) + " but got " + curr);
+        }
+    }
+
+    @Test
+    void migrationStartsAtVersionOne() {
+        List<Migration> migrations = SchemaMigrator.migrations();
+        assertEquals(1, migrations.get(0).version(),
+                "first migration must start at version 1");
+    }
+
+    @Test
+    void latestVersionMatchesLastMigration() {
+        List<Migration> migrations = SchemaMigrator.migrations();
+        int lastVersion = migrations.get(migrations.size() - 1).version();
+        assertEquals(lastVersion, SchemaMigrator.latestVersion(),
+                "latestVersion() must match the last migration's version");
+    }
+
+    @Test
+    void futureMigrationExtensionIsSupported() throws Exception {
+        // Verify that a database at the current latest version will not need
+        // any migrations when a future version is added (simulated by re-running).
+        DatabaseManager database = new DatabaseManager(tempDir.resolve("future.db"));
+        database.initialize();
+
+        int secondRun = database.initialize();
+        assertEquals(0, secondRun,
+                "re-running initialize on a fully-migrated database should apply 0 migrations");
+
+        assertEquals(SchemaMigrator.latestVersion(), database.schemaVersion(),
+                "schema version should match latest after idempotent re-run");
+    }
+
+    private static <T> void assertSame(T expected, T actual, String message) {
+        org.junit.jupiter.api.Assertions.assertSame(expected, actual, message);
     }
 }

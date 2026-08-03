@@ -98,8 +98,9 @@ class AuditWriteQueueConcurrencyTest {
 
         AuditWriteQueue.QueueStatus status = queue.status();
         assertEquals(0, status.pending(), "no records should remain pending");
-        assertTrue(status.written() + status.dropped() > 0,
-                "some records should have been written or dropped");
+        assertTrue(status.written() + status.dropped() + status.overflowDropped()
+                        + status.abandoned() > 0,
+                "some records should have been written, dropped, overflowed, or abandoned");
         assertTrue(status.written() <= status.submitted(),
                 "written cannot exceed submitted");
     }
@@ -126,7 +127,8 @@ class AuditWriteQueueConcurrencyTest {
         assertFalse(shutdownThread.isAlive(), "shutdown thread should have completed");
 
         AuditWriteQueue.QueueStatus status = queue.status();
-        assertEquals(5, status.written() + status.failed() + status.dropped());
+        assertEquals(5, status.written() + status.failed() + status.dropped()
+                + status.overflowDropped() + status.abandoned());
         assertEquals(0, status.pending());
     }
 
@@ -195,7 +197,77 @@ class AuditWriteQueueConcurrencyTest {
         assertEquals(10, status.written());
         assertEquals(0, status.failed());
         assertEquals(0, status.dropped());
+        assertEquals(0, status.overflowDropped());
+        assertEquals(0, status.abandoned());
         assertEquals(0, status.pending());
+
+        // Invariant: submitted = written + failed + abandoned + overflowDropped + pending
+        assertEquals(status.submitted(),
+                status.written() + status.failed() + status.abandoned()
+                        + status.overflowDropped() + status.pending(),
+                "submitted must equal written + failed + abandoned + overflowDropped + pending");
+    }
+
+    @Test
+    void metricInvariantHoldsWithAbandonedRecords() throws InterruptedException {
+        BlockingRepository repository = new BlockingRepository();
+        AuditWriteQueue queue = new AuditWriteQueue(repository, t -> {}, 128, 1);
+        queue.start();
+
+        queue.submit(record());
+        queue.submit(record());
+        queue.submit(record());
+
+        boolean drained = queue.shutdown(Duration.ofMillis(50));
+        assertFalse(drained, "shutdown should time out");
+
+        repository.unblock();
+        // Wait for writer to finish processing the blocked batch
+        queue.shutdown(Duration.ofSeconds(5));
+
+        AuditWriteQueue.QueueStatus status = queue.status();
+        assertEquals(3, status.submitted(), "3 records were accepted");
+        assertEquals(0, status.dropped(), "no records should have been dropped pre-acceptance");
+        assertEquals(0, status.overflowDropped(), "no records should have overflowed");
+        assertTrue(status.abandoned() > 0, "records left in queue should be abandoned");
+        assertEquals(0, status.pending(), "no records should remain pending after drain");
+
+        // Invariant: submitted = written + failed + abandoned + overflowDropped + pending
+        assertEquals(status.submitted(),
+                status.written() + status.failed() + status.abandoned()
+                        + status.overflowDropped() + status.pending(),
+                "submitted must equal written + failed + abandoned + overflowDropped + pending");
+    }
+
+    @Test
+    void metricInvariantHoldsWithQueueFullDrop() {
+        RecordingRepository repository = new RecordingRepository();
+        AuditWriteQueue queue = new AuditWriteQueue(repository, t -> {}, 16, 64);
+        // Don't start the queue so nothing drains
+        int accepted = 0;
+        int rejected = 0;
+        for (int i = 0; i < 100; i++) {
+            if (queue.submit(record())) {
+                accepted++;
+            } else {
+                rejected++;
+            }
+        }
+
+        AuditWriteQueue.QueueStatus status = queue.status();
+        assertEquals(accepted + rejected, status.submitted(),
+                "submitted should count all records that passed the running check");
+        assertEquals(rejected, status.overflowDropped(), "overflowDropped should match rejected count");
+        assertEquals(0, status.dropped(), "no pre-acceptance drops");
+        assertEquals(0, status.abandoned(), "no records abandoned before shutdown");
+
+        // Invariant: submitted = written + failed + abandoned + overflowDropped + pending
+        assertEquals(status.submitted(),
+                status.written() + status.failed() + status.abandoned()
+                        + status.overflowDropped() + status.pending(),
+                "submitted must equal written + failed + abandoned + overflowDropped + pending");
+
+        queue.shutdown(Duration.ofSeconds(5));
     }
 
     private static AuditRecord record() {

@@ -38,6 +38,8 @@ public final class AuditWriteQueue implements AutoCloseable {
     private final AtomicLong written = new AtomicLong();
     private final AtomicLong failed = new AtomicLong();
     private final AtomicLong dropped = new AtomicLong();
+    private final AtomicLong overflowDropped = new AtomicLong();
+    private final AtomicLong abandoned = new AtomicLong();
 
     private final AtomicBoolean started = new AtomicBoolean(false);
     private volatile boolean running = true;
@@ -80,7 +82,7 @@ public final class AuditWriteQueue implements AutoCloseable {
             return true;
         }
 
-        dropped.incrementAndGet();
+        overflowDropped.incrementAndGet();
         return false;
     }
 
@@ -90,6 +92,8 @@ public final class AuditWriteQueue implements AutoCloseable {
                 written.get(),
                 failed.get(),
                 dropped.get(),
+                overflowDropped.get(),
+                abandoned.get(),
                 queue.size()
         );
     }
@@ -112,7 +116,7 @@ public final class AuditWriteQueue implements AutoCloseable {
             boolean finished = stopped.await(timeout.toMillis(), TimeUnit.MILLISECONDS);
             AuditRecord late;
             while ((late = queue.poll()) != null) {
-                dropped.incrementAndGet();
+                abandoned.incrementAndGet();
             }
             return finished;
         } catch (InterruptedException exception) {
@@ -168,6 +172,8 @@ public final class AuditWriteQueue implements AutoCloseable {
             long written,
             long failed,
             long dropped,
+            long overflowDropped,
+            long abandoned,
             int pending
     ) {
     }

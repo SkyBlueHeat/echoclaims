@@ -75,8 +75,13 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
     }
 
     private void status(CommandSender sender) {
+        StatusService service = statusServiceSupplier.get();
+        if (service == null) {
+            messages().send(sender, "not-ready");
+            return;
+        }
         queryExecutor.submit(() -> {
-            StatusService.StatusReport report = statusServiceSupplier.get().collect();
+            StatusService.StatusReport report = service.collect();
             syncScheduler.accept(() -> sendStatusReport(sender, report));
         });
     }
@@ -91,6 +96,8 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
         line(sender, "queue.written", Long.toString(report.writtenCount()));
         line(sender, "queue.failed", Long.toString(report.failedCount()));
         line(sender, "queue.dropped", Long.toString(report.droppedCount()));
+        line(sender, "queue.overflow-dropped", Long.toString(report.overflowDroppedCount()));
+        line(sender, "queue.abandoned", Long.toString(report.abandonedCount()));
         line(sender, "providers", String.join(", ", report.providers()));
         line(sender, "uptime", formatUptime(report.uptimeMillis()));
     }
