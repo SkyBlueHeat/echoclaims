@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.logging.Level;
@@ -79,6 +80,7 @@ public final class EchoClaimsPlugin extends JavaPlugin {
                 Level.WARNING, "Content provider '" + providerId + "' failed", throwable));
         integrations.registerEntityProvider(new VanillaEntityProvider());
         integrations.registerItemProvider(new VanillaItemProvider());
+        integrations.freeze();
         getLogger().info("Content providers: "
                 + String.join(", ", integrations.describeProviders()));
 
@@ -143,21 +145,27 @@ public final class EchoClaimsPlugin extends JavaPlugin {
      * worker threads.</p>
      */
     private boolean initializeStorage() {
+        Future<Integer> future = queryExecutor
+                .submit(() -> databaseManager.initialize());
         try {
-            int applied = queryExecutor
-                    .submit(() -> databaseManager.initialize())
-                    .get(STORAGE_INIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            int applied = future.get(STORAGE_INIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             getLogger().info("Storage ready at " + databaseManager.databasePath()
                     + " (" + applied + " migration(s) applied)");
             return true;
         } catch (InterruptedException exception) {
+            future.cancel(true);
             Thread.currentThread().interrupt();
             getLogger().severe("Interrupted while preparing EchoClaims storage");
             return false;
-        } catch (ExecutionException | TimeoutException exception) {
+        } catch (ExecutionException exception) {
             getLogger().log(Level.SEVERE,
                     "EchoClaims could not initialize its database and will stay disabled",
                     exception);
+            return false;
+        } catch (TimeoutException exception) {
+            future.cancel(true);
+            getLogger().severe("EchoClaims storage initialization timed out after "
+                    + STORAGE_INIT_TIMEOUT_SECONDS + " seconds; plugin will stay disabled");
             return false;
         }
     }
@@ -181,7 +189,9 @@ public final class EchoClaimsPlugin extends JavaPlugin {
         EchoClaimsCommand executor = new EchoClaimsCommand(
                 this,
                 () -> messages,
-                () -> statusService
+                () -> statusService,
+                queryExecutor,
+                runnable -> getServer().getScheduler().runTask(this, runnable)
         );
         command.setExecutor(executor);
         command.setTabCompleter(executor);

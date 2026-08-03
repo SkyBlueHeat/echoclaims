@@ -57,4 +57,9 @@ public final class IntegrationRegistry {
     public List<ProviderStatus> itemProviderStatuses() {
         return itemProviders.statuses();
     }
+
+    public void freeze() {
+        entityProviders.freeze();
+        itemProviders.freeze();
+    }
 }

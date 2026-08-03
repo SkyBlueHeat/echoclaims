@@ -11,6 +11,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
@@ -38,6 +39,7 @@ public final class AuditWriteQueue implements AutoCloseable {
     private final AtomicLong failed = new AtomicLong();
     private final AtomicLong dropped = new AtomicLong();
 
+    private final AtomicBoolean started = new AtomicBoolean(false);
     private volatile boolean running = true;
 
     public AuditWriteQueue(
@@ -57,6 +59,9 @@ public final class AuditWriteQueue implements AutoCloseable {
     }
 
     public void start() {
+        if (!started.compareAndSet(false, true)) {
+            throw new IllegalStateException("AuditWriteQueue already started");
+        }
         writer.start();
     }
 
@@ -96,11 +101,20 @@ public final class AuditWriteQueue implements AutoCloseable {
      */
     public boolean shutdown(Duration timeout) {
         running = false;
+
+        if (!started.get()) {
+            return queue.isEmpty();
+        }
+
         writer.interrupt();
 
         try {
             boolean finished = stopped.await(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            return finished && queue.isEmpty();
+            AuditRecord late;
+            while ((late = queue.poll()) != null) {
+                dropped.incrementAndGet();
+            }
+            return finished;
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             return false;

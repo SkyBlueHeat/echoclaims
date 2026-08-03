@@ -54,8 +54,3 @@ persistence:
   write-queue-capacity: 2000
   # Records written per transaction.
   write-batch-size: 64
-
-# Retention placeholder: days to keep audit records before pruning.
-# Set to 0 to disable automatic pruning (not yet implemented).
-retention:
-  days: 30

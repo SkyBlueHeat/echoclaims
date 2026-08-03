@@ -5,7 +5,6 @@ import io.github.skyblueheat.echoclaims.domain.item.ItemScoreWeights;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.Set;
 
 public record EchoClaimsSettings(
         String locale,
@@ -15,8 +14,7 @@ public record EchoClaimsSettings(
         Duration shutdownTimeout,
         int writeQueueCapacity,
         int writeBatchSize,
-        boolean debugLogging,
-        int retentionDays
+        boolean debugLogging
 ) {
 
     public EchoClaimsSettings {
@@ -26,15 +24,27 @@ public record EchoClaimsSettings(
                 itemScoreWeights,
                 ItemScoreWeights::defaults
         );
-        sqliteFile = sqliteFile == null || sqliteFile.isBlank()
-                ? "echoclaims.db"
-                : sqliteFile.strip();
+        sqliteFile = validateSqliteFile(sqliteFile);
         shutdownTimeout = shutdownTimeout == null
                 ? Duration.ofSeconds(10)
                 : shutdownTimeout;
         writeQueueCapacity = Math.max(16, writeQueueCapacity);
         writeBatchSize = Math.max(1, writeBatchSize);
-        retentionDays = Math.max(0, retentionDays);
+    }
+
+    private static String validateSqliteFile(String value) {
+        String fallback = "echoclaims.db";
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String stripped = value.strip();
+        if (stripped.contains("/") || stripped.contains("\\") || stripped.contains("..")) {
+            return fallback;
+        }
+        if (stripped.equals(".") || stripped.equals("-") || stripped.length() > 255) {
+            return fallback;
+        }
+        return stripped;
     }
 
     public static EchoClaimsSettings defaults() {
