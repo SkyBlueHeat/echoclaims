@@ -1,0 +1,5 @@
+name: SerializationTestPlugin
+version: '0.1.0'
+main: io.github.skyblueheat.echoclaims.testplugin.SerializationTestPlugin
+api-version: '26.2'
+load: POSTWORLD
