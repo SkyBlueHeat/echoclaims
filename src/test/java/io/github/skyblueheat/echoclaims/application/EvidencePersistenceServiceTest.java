@@ -7,8 +7,10 @@ import io.github.skyblueheat.echoclaims.domain.snapshot.CaptureReason;
 import io.github.skyblueheat.echoclaims.domain.snapshot.Coordinates;
 import io.github.skyblueheat.echoclaims.domain.snapshot.InventorySnapshot;
 import io.github.skyblueheat.echoclaims.persistence.DatabaseManager;
+import io.github.skyblueheat.echoclaims.persistence.EvidenceStore;
 import io.github.skyblueheat.echoclaims.persistence.IncidentRepository;
 import io.github.skyblueheat.echoclaims.persistence.InventorySnapshotRepository;
+import io.github.skyblueheat.echoclaims.persistence.SqliteEvidenceStore;
 import io.github.skyblueheat.echoclaims.persistence.SqliteIncidentRepository;
 import io.github.skyblueheat.echoclaims.persistence.SqliteInventorySnapshotRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -34,6 +36,7 @@ class EvidencePersistenceServiceTest {
     Path tempDir;
 
     private DatabaseManager database;
+    private EvidenceStore evidenceStore;
     private InventorySnapshotRepository snapshotRepo;
     private IncidentRepository incidentRepo;
     private EvidenceMetrics metrics;
@@ -44,12 +47,13 @@ class EvidencePersistenceServiceTest {
     void setUp() throws Exception {
         database = new DatabaseManager(tempDir.resolve("evidence_svc.db"));
         database.initialize();
+        evidenceStore = new SqliteEvidenceStore(database);
         snapshotRepo = new SqliteInventorySnapshotRepository(database);
         incidentRepo = new SqliteIncidentRepository(database);
         metrics = new EvidenceMetrics();
         errorCount.set(0);
         service = new EvidencePersistenceService(
-                snapshotRepo, incidentRepo, metrics,
+                evidenceStore, metrics,
                 throwable -> errorCount.incrementAndGet(),
                 32,
                 Logger.getLogger("test")
@@ -59,7 +63,6 @@ class EvidencePersistenceServiceTest {
     @AfterEach
     void tearDown() {
         service.shutdown(Duration.ofSeconds(5));
-        // SQLiteDataSource is garbage-collected; no explicit close needed.
     }
 
     private InventorySnapshot createSnapshot(UUID id, UUID playerUuid) {
@@ -118,7 +121,7 @@ class EvidencePersistenceServiceTest {
         awaitMetrics(() -> metrics.duplicateIncidents() >= 1, 5_000);
 
         assertEquals(2, metrics.acceptedCaptures());
-        assertEquals(2, metrics.persistedSnapshots());
+        assertEquals(1, metrics.persistedSnapshots());
         assertEquals(1, metrics.persistedIncidents());
         assertEquals(1, metrics.duplicateIncidents());
         assertEquals(0, metrics.failedPersistence());
@@ -166,6 +169,48 @@ class EvidencePersistenceServiceTest {
         assertTrue(incident.isPresent());
         assertTrue(incident.get().hasPostEventSnapshot());
         assertEquals(postSnapshotId, incident.get().postEventSnapshotUuid());
+    }
+
+    @Test
+    void executorRejectionIsReportedAndCounted() throws Exception {
+        service.shutdown(Duration.ofMillis(100));
+
+        UUID player = UUID.randomUUID();
+        boolean accepted = service.submitDeathCapture(
+                createSnapshot(UUID.randomUUID(), player),
+                createIncident(UUID.randomUUID(), player, UUID.randomUUID(), "rejected-1")
+        );
+
+        assertFalse(accepted);
+        assertEquals(1, metrics.rejectedCaptures());
+    }
+
+    @Test
+    void repeatedDisableIsSafe() {
+        assertTrue(service.shutdown(Duration.ofSeconds(1)));
+        assertTrue(service.shutdown(Duration.ofSeconds(1)));
+    }
+
+    @Test
+    void pendingEvidenceDrainsOnShutdown() throws Exception {
+        UUID player = UUID.randomUUID();
+        for (int i = 0; i < 5; i++) {
+            UUID snapshotId = UUID.randomUUID();
+            service.submitDeathCapture(
+                    createSnapshot(snapshotId, player),
+                    createIncident(UUID.randomUUID(), player, snapshotId, "drain-" + i)
+            );
+        }
+
+        boolean drained = service.shutdown(Duration.ofSeconds(10));
+        assertTrue(drained);
+        awaitMetrics(() -> metrics.persistedIncidents() + metrics.failedPersistence() + metrics.duplicateIncidents() >= 5, 5_000);
+        assertEquals(5, metrics.acceptedCaptures());
+        assertEquals(5, metrics.persistedIncidents(),
+                "expected 5 persisted incidents but got " + metrics.persistedIncidents()
+                + " (failed=" + metrics.failedPersistence() + ", dup=" + metrics.duplicateIncidents()
+                + ", errors=" + errorCount.get() + ")");
+        assertEquals(0, service.pendingCount());
     }
 
     private void awaitMetrics(java.util.function.Supplier<Boolean> condition, long timeoutMillis)

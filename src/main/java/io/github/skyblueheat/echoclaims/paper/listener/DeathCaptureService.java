@@ -138,7 +138,11 @@ public final class DeathCaptureService implements Listener {
                 player, snapshotId, CaptureReason.PRE_DEATH, now, settings.maxItemPayloadBytes()
         );
 
-        Incident incident = buildIncident(player, event, incidentId, snapshotId, now);
+        String deathCause = determineCause(player);
+        String snapshotFingerprint = DeduplicationKeyFactory.snapshotFingerprint(snapshot);
+
+        Incident incident = buildIncident(player, event, incidentId, snapshotId, now,
+                deathCause, snapshotFingerprint);
 
         boolean accepted = persistenceService.submitDeathCapture(snapshot, incident);
         if (!accepted) {
@@ -221,7 +225,9 @@ public final class DeathCaptureService implements Listener {
             PlayerDeathEvent event,
             UUID incidentId,
             UUID snapshotId,
-            long timestamp
+            long timestamp,
+            String deathCause,
+            String snapshotFingerprint
     ) {
         Location location = player.getLocation();
         World world = location.getWorld();
@@ -232,7 +238,6 @@ public final class DeathCaptureService implements Listener {
                 location.getBlockZ()
         );
 
-        String cause = determineCause(player);
         UUID killerPlayerUuid = null;
         String killerEntityKey = "";
 
@@ -260,7 +265,8 @@ public final class DeathCaptureService implements Listener {
         }
 
         String deduplicationKey = DeduplicationKeyFactory.forPlayerDeath(
-                player.getUniqueId(), timestamp, worldId, coordinates
+                player.getUniqueId(), timestamp, worldId, coordinates,
+                deathCause, snapshotFingerprint
         );
 
         return new Incident(
@@ -270,7 +276,7 @@ public final class DeathCaptureService implements Listener {
                 timestamp,
                 worldId,
                 coordinates,
-                cause,
+                deathCause,
                 killerPlayerUuid,
                 killerEntityKey,
                 snapshotId,

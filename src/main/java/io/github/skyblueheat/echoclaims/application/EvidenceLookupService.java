@@ -16,7 +16,7 @@ import java.util.UUID;
  * <p>All methods block on disk I/O and must be called from the query executor, never
  * from the server main thread.</p>
  */
-public final class EvidenceLookupService {
+public class EvidenceLookupService {
 
     private final IncidentRepository incidentRepository;
     private final InventorySnapshotRepository snapshotRepository;

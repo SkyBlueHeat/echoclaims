@@ -16,13 +16,16 @@ import io.github.skyblueheat.echoclaims.integration.vanilla.VanillaItemProvider;
 import io.github.skyblueheat.echoclaims.paper.command.EchoClaimsCommand;
 import io.github.skyblueheat.echoclaims.paper.config.BukkitConfigurationSource;
 import io.github.skyblueheat.echoclaims.paper.listener.DeathCaptureService;
+import io.github.skyblueheat.echoclaims.paper.message.MessageService;
 import io.github.skyblueheat.echoclaims.paper.message.PaperMessageService;
 import io.github.skyblueheat.echoclaims.persistence.AuditRecordRepository;
 import io.github.skyblueheat.echoclaims.persistence.AuditWriteQueue;
 import io.github.skyblueheat.echoclaims.persistence.DatabaseManager;
+import io.github.skyblueheat.echoclaims.persistence.EvidenceStore;
 import io.github.skyblueheat.echoclaims.persistence.IncidentRepository;
 import io.github.skyblueheat.echoclaims.persistence.InventorySnapshotRepository;
 import io.github.skyblueheat.echoclaims.persistence.SqliteAuditRecordRepository;
+import io.github.skyblueheat.echoclaims.persistence.SqliteEvidenceStore;
 import io.github.skyblueheat.echoclaims.persistence.SqliteIncidentRepository;
 import io.github.skyblueheat.echoclaims.persistence.SqliteInventorySnapshotRepository;
 import org.bukkit.command.PluginCommand;
@@ -54,6 +57,7 @@ public final class EchoClaimsPlugin extends JavaPlugin {
     private AuditWriteQueue writeQueue;
     private InventorySnapshotRepository snapshotRepository;
     private IncidentRepository incidentRepository;
+    private EvidenceStore evidenceStore;
     private EvidenceMetrics evidenceMetrics;
     private EvidencePersistenceService evidenceService;
     private DeathCaptureService deathCaptureService;
@@ -175,11 +179,11 @@ public final class EchoClaimsPlugin extends JavaPlugin {
 
         snapshotRepository = new SqliteInventorySnapshotRepository(databaseManager);
         incidentRepository = new SqliteIncidentRepository(databaseManager);
+        evidenceStore = new SqliteEvidenceStore(databaseManager);
 
         evidenceMetrics = new EvidenceMetrics();
         evidenceService = new EvidencePersistenceService(
-                snapshotRepository,
-                incidentRepository,
+                evidenceStore,
                 evidenceMetrics,
                 throwable -> getLogger().log(Level.SEVERE, "Evidence persistence failed", throwable),
                 settings.evidenceQueueCapacity(),
@@ -243,7 +247,7 @@ public final class EchoClaimsPlugin extends JavaPlugin {
 
         EchoClaimsCommand executor = new EchoClaimsCommand(
                 this,
-                () -> messages,
+                () -> (MessageService) messages,
                 () -> statusService,
                 () -> evidenceLookupService,
                 queryExecutor,

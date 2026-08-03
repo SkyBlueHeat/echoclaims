@@ -2,15 +2,13 @@ package io.github.skyblueheat.echoclaims.application;
 
 import io.github.skyblueheat.echoclaims.domain.incident.Incident;
 import io.github.skyblueheat.echoclaims.domain.snapshot.InventorySnapshot;
-import io.github.skyblueheat.echoclaims.persistence.IncidentRepository;
-import io.github.skyblueheat.echoclaims.persistence.InventorySnapshotRepository;
+import io.github.skyblueheat.echoclaims.persistence.EvidenceStore;
 
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -22,9 +20,10 @@ import java.util.logging.Logger;
  * Asynchronous persistence path for evidence captures.
  *
  * <p>Capture tasks are submitted on the server thread and executed on a bounded
- * single-thread executor. The persistence ordering is: snapshot first, then incident.
- * If the snapshot fails, the incident is not inserted, ensuring an incident never
- * references a snapshot that failed to persist.</p>
+ * single-thread executor. Each death evidence unit — inventory snapshot, all snapshot
+ * items, and the incident — is persisted atomically in a single database transaction
+ * via {@link EvidenceStore}. Either all three persist or none persist, guaranteeing
+ * no orphan snapshots or incidents.</p>
  *
  * <p>Rejected captures (when the queue is full or the service is shutting down) are
  * counted but never silently discarded. Duplicate incidents (caught by the database
@@ -32,8 +31,7 @@ import java.util.logging.Logger;
  */
 public final class EvidencePersistenceService {
 
-    private final InventorySnapshotRepository snapshotRepository;
-    private final IncidentRepository incidentRepository;
+    private final EvidenceStore evidenceStore;
     private final EvidenceMetrics metrics;
     private final Consumer<Throwable> errorHandler;
     private final ThreadPoolExecutor executor;
@@ -42,15 +40,13 @@ public final class EvidencePersistenceService {
     private volatile boolean running = true;
 
     public EvidencePersistenceService(
-            InventorySnapshotRepository snapshotRepository,
-            IncidentRepository incidentRepository,
+            EvidenceStore evidenceStore,
             EvidenceMetrics metrics,
             Consumer<Throwable> errorHandler,
             int queueCapacity,
             Logger logger
     ) {
-        this.snapshotRepository = Objects.requireNonNull(snapshotRepository, "snapshotRepository");
-        this.incidentRepository = Objects.requireNonNull(incidentRepository, "incidentRepository");
+        this.evidenceStore = Objects.requireNonNull(evidenceStore, "evidenceStore");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.errorHandler = Objects.requireNonNull(errorHandler, "errorHandler");
         this.logger = Objects.requireNonNull(logger, "logger");
@@ -70,10 +66,10 @@ public final class EvidencePersistenceService {
     }
 
     /**
-     * Submits a death capture for asynchronous persistence.
+     * Submits a death capture for asynchronous atomic persistence.
      *
-     * <p>The snapshot is persisted first. If successful, the incident is persisted.
-     * If the snapshot fails, the incident is not attempted.</p>
+     * <p>The snapshot, all items, and the incident are persisted in a single
+     * transaction. Either all persist or none persist.</p>
      *
      * @return {@code true} if the capture was accepted, {@code false} if rejected
      */
@@ -102,7 +98,7 @@ public final class EvidencePersistenceService {
 
     /**
      * Submits a post-respawn snapshot for asynchronous persistence and links it to
-     * an existing incident.
+     * an existing incident. The snapshot insert and incident update are atomic.
      *
      * @return {@code true} if accepted, {@code false} if rejected
      */
@@ -118,6 +114,7 @@ public final class EvidencePersistenceService {
             executor.submit(() -> persistPostRespawnSnapshot(incidentId, snapshot));
             return true;
         } catch (RejectedExecutionException exception) {
+            metrics.recordRejectedCapture();
             logger.log(Level.WARNING,
                     "Post-respawn snapshot rejected (queue full): snapshot=" + snapshot.id()
                             + " incident=" + incidentId, exception);
@@ -159,26 +156,19 @@ public final class EvidencePersistenceService {
 
     private void persistDeathCapture(InventorySnapshot snapshot, Incident incident) {
         try {
-            snapshotRepository.insert(snapshot);
+            evidenceStore.insertDeathEvidence(snapshot, incident);
             metrics.recordSnapshotPersisted();
-
-            try {
-                incidentRepository.insert(incident);
-                metrics.recordIncidentPersisted();
-            } catch (SQLException incidentException) {
-                if (isDuplicateKeyViolation(incidentException)) {
-                    metrics.recordDuplicateIncident();
-                    logger.log(Level.FINE,
-                            "Duplicate incident suppressed: " + incident.deduplicationKey(),
-                            incidentException);
-                } else {
-                    metrics.recordFailedPersistence();
-                    errorHandler.accept(incidentException);
-                }
+            metrics.recordIncidentPersisted();
+        } catch (SQLException exception) {
+            if (isDuplicateKeyViolation(exception)) {
+                metrics.recordDuplicateIncident();
+                logger.log(Level.FINE,
+                        "Duplicate incident suppressed: " + incident.deduplicationKey(),
+                        exception);
+            } else {
+                metrics.recordFailedPersistence();
+                errorHandler.accept(exception);
             }
-        } catch (SQLException snapshotException) {
-            metrics.recordFailedPersistence();
-            errorHandler.accept(snapshotException);
         } catch (RuntimeException runtimeException) {
             metrics.recordFailedPersistence();
             errorHandler.accept(runtimeException);
@@ -187,9 +177,8 @@ public final class EvidencePersistenceService {
 
     private void persistPostRespawnSnapshot(UUID incidentId, InventorySnapshot snapshot) {
         try {
-            snapshotRepository.insert(snapshot);
+            evidenceStore.insertPostRespawnSnapshot(incidentId, snapshot);
             metrics.recordSnapshotPersisted();
-            incidentRepository.updatePostEventSnapshot(incidentId, snapshot.id());
         } catch (SQLException exception) {
             metrics.recordFailedPersistence();
             errorHandler.accept(exception);

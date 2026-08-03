@@ -5,6 +5,7 @@ import io.github.skyblueheat.echoclaims.application.StatusService;
 import io.github.skyblueheat.echoclaims.domain.incident.Incident;
 import io.github.skyblueheat.echoclaims.domain.snapshot.InventorySnapshot;
 import io.github.skyblueheat.echoclaims.domain.snapshot.SnapshotItem;
+import io.github.skyblueheat.echoclaims.paper.message.MessageService;
 import io.github.skyblueheat.echoclaims.paper.message.PaperMessageService;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
@@ -44,7 +45,7 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
             List.of("status", "incidents", "incident", "snapshot");
 
     private final Plugin plugin;
-    private final Supplier<PaperMessageService> messageSupplier;
+    private final Supplier<MessageService> messageSupplier;
     private final Supplier<StatusService> statusServiceSupplier;
     private final Supplier<EvidenceLookupService> evidenceLookupSupplier;
     private final ExecutorService queryExecutor;
@@ -53,14 +54,14 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
 
     public EchoClaimsCommand(
             Plugin plugin,
-            Supplier<PaperMessageService> messageSupplier,
+            Supplier<MessageService> messageSupplier,
             Supplier<StatusService> statusServiceSupplier,
             Supplier<EvidenceLookupService> evidenceLookupSupplier,
             ExecutorService queryExecutor,
             Consumer<Runnable> syncScheduler,
             Logger logger
     ) {
-        this.plugin = Objects.requireNonNull(plugin, "plugin");
+        this.plugin = plugin;
         this.messageSupplier = Objects.requireNonNull(messageSupplier, "messageSupplier");
         this.statusServiceSupplier = Objects.requireNonNull(statusServiceSupplier, "statusServiceSupplier");
         this.evidenceLookupSupplier = Objects.requireNonNull(evidenceLookupSupplier, "evidenceLookupSupplier");
@@ -368,17 +369,24 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
             return parsed;
         }
 
-        OfflinePlayer player = Bukkit.getOfflinePlayer(input);
-        if (player != null && player.getUniqueId() != null) {
-            return Optional.of(player.getUniqueId());
+        try {
+            OfflinePlayer player = Bukkit.getOfflinePlayer(input);
+            if (player != null && player.getUniqueId() != null) {
+                return Optional.of(player.getUniqueId());
+            }
+        } catch (Exception ignored) {
         }
         return Optional.empty();
     }
 
     private static String resolvePlayerName(UUID uuid) {
-        OfflinePlayer player = Bukkit.getOfflinePlayer(uuid);
-        String name = player != null ? player.getName() : null;
-        return name != null ? name : uuid.toString();
+        try {
+            OfflinePlayer player = Bukkit.getOfflinePlayer(uuid);
+            String name = player != null ? player.getName() : null;
+            return name != null ? name : uuid.toString();
+        } catch (Exception exception) {
+            return uuid.toString();
+        }
     }
 
     private static Optional<UUID> parseUuid(String input) {
@@ -406,7 +414,7 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
         messages().send(sender, "status-line", Map.of("key", key, "value", value));
     }
 
-    private PaperMessageService messages() {
+    private MessageService messages() {
         return messageSupplier.get();
     }
 
