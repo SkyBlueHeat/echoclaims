@@ -1,0 +1,17 @@
+# Gradle
+.gradle/
+build/
+
+# Editors
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+
+# Local runtime data
+*.db
+*.db-shm
+*.db-wal
+run/

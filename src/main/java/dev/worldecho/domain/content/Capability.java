@@ -1,0 +1,20 @@
+package dev.worldecho.domain.content;
+
+public enum Capability {
+    CAN_FIGHT,
+    CAN_SPEAK,
+    CAN_HOLD_ITEMS,
+    CAN_OWN_ITEMS,
+    CAN_BE_PROMOTED,
+    CAN_COMMAND_UNITS,
+    CAN_LEAD_FACTION,
+    CAN_RAID_SETTLEMENTS,
+    CAN_TRADE,
+    CAN_CREATE_RIVALRY,
+    CAN_BE_CORRUPTED,
+    CAN_HAVE_HISTORY,
+    CAN_CHANGE_OWNER,
+    CAN_BE_STOLEN,
+    CAN_BE_LOST,
+    CAN_BECOME_HEIRLOOM
+}

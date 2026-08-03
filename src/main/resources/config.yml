@@ -1,0 +1,93 @@
+# WorldEcho - Sprint 1 memory kernel
+# Every value is validated on load. An invalid value is replaced by the default below and
+# reported in the server log, so a typo can never prevent the plugin from starting.
+
+# Message language: en or tr.
+locale: en
+
+capture:
+  player-deaths:
+    # Record "a living entity killed a player" memories.
+    enabled: true
+    # Store the memory even when no dropped item reaches minimum-item-score.
+    record-without-valuable-item: true
+    # Lowest score a dropped item needs before it can become the memory's item.
+    minimum-item-score: 25
+    # Replace custom item names with a placeholder in stored snapshots.
+    redact-custom-item-names: false
+    # Worlds that never produce memories.
+    ignored-worlds: []
+
+# Deterministic item value scoring. Scores are integers; higher means more story-worthy.
+scoring:
+  # Exact material keys win over material-tiers.
+  material-scores:
+    dragon_egg: 100
+    enchanted_golden_apple: 60
+    elytra: 55
+    nether_star: 55
+    trident: 50
+    mace: 50
+    totem_of_undying: 45
+  # Material path prefixes, longest match wins.
+  material-tiers:
+    netherite_: 60
+    diamond_: 45
+    golden_: 25
+    iron_: 20
+    chainmail_: 15
+    stone_: 8
+    wooden_: 4
+    leather_: 4
+  default-material-score: 1
+  # Points per enchantment plus points per enchantment level.
+  enchantment-base: 4
+  enchantment-per-level: 2
+  custom-name-bonus: 8
+  unbreakable-bonus: 12
+  # Applied when a non-vanilla provider identified the item.
+  provider-identified-bonus: 10
+  # Maximum bonus from stack size.
+  amount-bonus-cap: 5
+  # Maximum penalty from durability damage.
+  wear-penalty-cap: 10
+
+persistence:
+  # SQLite file inside the plugin data folder.
+  sqlite-file: worldecho.db
+  # How long onDisable waits for the writer thread to flush.
+  shutdown-timeout-seconds: 10
+  # Maximum queued events before new ones are dropped and logged.
+  write-queue-capacity: 2000
+  # Events written per transaction.
+  write-batch-size: 64
+
+commands:
+  recent-default-count: 10
+  recent-maximum-count: 50
+
+items:
+  identity:
+    # Enable persistent tracked-item identity via PDC.
+    enabled: true
+  history:
+    # Default number of ownership history entries shown by /worldecho item history.
+    default-limit: 10
+    # Maximum number of ownership history entries that can be requested.
+    maximum-limit: 50
+  automatic-tracking:
+    # Automatically identify and record items entering active player inventories.
+    # Normal players are not expected to manually track items.
+    enabled: true
+    # Track items in player inventories (main, hotbar, armor, offhand).
+    player-inventories: true
+    # Reconcile inventory when a player joins.
+    reconcile-on-join: true
+    # Reconcile inventory when a player respawns.
+    reconcile-on-respawn: true
+    # Reconcile inventory after inventory events (click, drag, pickup, etc.).
+    reconcile-after-inventory-events: true
+    # Preserve WorldEcho identity across anvil, smithing table, and grindstone transformations.
+    transform-identity-continuity: true
+    # Show debug messages for automatic tracking (admin only, console only).
+    debug-messages: false

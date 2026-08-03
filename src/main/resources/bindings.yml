@@ -1,0 +1,102 @@
+# WorldEcho Content Bindings
+#
+# Maps provider-specific content IDs to WorldEcho semantic metadata.
+# A binding enriches — never replaces — the roles and capabilities a provider supplies.
+#
+# Schema version 1 is the only supported version.
+#
+# Content keys use the format: provider:path
+#   minecraft:zombie
+#   mythicmobs:goblin_soldier
+#   oraxen:flame_sword
+#
+# A binding for an unavailable provider is valid. It becomes useful when a provider
+# later identifies that key.
+#
+# Valid roles:      PLAYER, SOLDIER, CAPTAIN, COMMANDER, MONARCH, MERCHANT, BLACKSMITH,
+#                  HEALER, BANDIT, ANIMAL, MONSTER, CIVILIAN, WITNESS, HEIR, RIVAL,
+#                  WEAPON, ARMOR, RELIC, LEGENDARY_CANDIDATE, FACTION_SYMBOL,
+#                  QUEST_OBJECT, HEIRLOOM, FIRE, ICE
+#
+# Valid capabilities: CAN_FIGHT, CAN_SPEAK, CAN_HOLD_ITEMS, CAN_OWN_ITEMS, CAN_BE_PROMOTED,
+#                     CAN_COMMAND_UNITS, CAN_LEAD_FACTION, CAN_RAID_SETTLEMENTS, CAN_TRADE,
+#                     CAN_CREATE_RIVALRY, CAN_BE_CORRUPTED, CAN_HAVE_HISTORY, CAN_CHANGE_OWNER,
+#                     CAN_BE_STOLEN, CAN_BE_LOST, CAN_BECOME_HEIRLOOM
+#
+# In YAML, use kebab-case (e.g. can-fight) or SCREAMING_SNAKE_CASE; both are accepted.
+# Unknown tokens produce a warning and are excluded but do not prevent loading.
+#
+# Optional fields:
+#   faction  — plain identifier (metadata only in Sprint 0.2A)
+#   rank     — plain identifier (metadata only in Sprint 0.2A)
+#   superior — content key of a superior entity (metadata only in Sprint 0.2A)
+#   tags     — list of free-form string tags
+#
+# faction, rank, superior, and tags do NOT activate faction behavior, promotion,
+# ownership transfer, or story execution. They are stored for future sprints.
+
+version: 1
+
+bindings:
+  entities:
+    minecraft:zombie:
+      roles:
+        - monster
+      capabilities:
+        - can-fight
+        - can-hold-items
+      tags:
+        - undead
+
+    minecraft:skeleton:
+      roles:
+        - monster
+      capabilities:
+        - can-fight
+        - can-hold-items
+      tags:
+        - undead
+
+    # Example: a MythicMobs entity binding. This binding is valid even when
+    # MythicMobs is not installed. It becomes useful when the MythicMobs bridge
+    # (Sprint 0.4) identifies this content key.
+    mythicmobs:goblin_soldier:
+      roles:
+        - soldier
+      capabilities:
+        - can-fight
+        - can-hold-items
+        - can-be-promoted
+      faction: goblin_clans
+      rank: soldier
+      superior: mythicmobs:goblin_captain
+      tags:
+        - goblin
+        - humanoid
+
+  items:
+    minecraft:diamond_sword:
+      roles:
+        - weapon
+      capabilities:
+        - can-change-owner
+        - can-be-stolen
+        - can-be-lost
+      tags:
+        - weapon
+
+    # Example: an Oraxen item binding. This binding is valid even when
+    # Oraxen is not installed. It becomes useful when the Oraxen bridge
+    # (Sprint 0.5) identifies this content key.
+    oraxen:flame_sword:
+      roles:
+        - weapon
+        - relic
+      capabilities:
+        - can-change-owner
+        - can-be-stolen
+        - can-have-history
+      faction: goblin_clans
+      tags:
+        - weapon
+        - fire

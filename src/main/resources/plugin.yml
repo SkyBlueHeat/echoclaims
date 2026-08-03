@@ -1,0 +1,35 @@
+name: WorldEcho
+version: '${version}'
+main: dev.worldecho.paper.WorldEchoPlugin
+description: A provider-neutral living-world memory and story engine for Paper servers.
+authors: [WorldEcho]
+api-version: '26.2'
+load: POSTWORLD
+commands:
+  worldecho:
+    description: WorldEcho administration command
+    usage: /worldecho <status|recent|inspect|reload|eligibility|item>
+    aliases: [wecho]
+    permission: worldecho.admin
+permissions:
+  worldecho.admin:
+    description: Allows administration and diagnostics for WorldEcho
+    default: op
+  worldecho.item.inspect:
+    description: Allows inspecting tracked-item identity and ownership
+    default: op
+  worldecho.item.track:
+    description: Allows tracking a new item with a WorldEcho identity
+    default: op
+  worldecho.item.history:
+    description: Allows viewing ownership history for a tracked item
+    default: op
+  worldecho.item.assign:
+    description: Allows administratively assigning ownership of a tracked item
+    default: op
+  worldecho.item.reconcile:
+    description: Allows triggering manual inventory reconciliation
+    default: op
+  worldecho.item.policy:
+    description: Allows inspecting item identity classification policy
+    default: op
