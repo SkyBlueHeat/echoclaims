@@ -44,6 +44,6 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: worldecho-plugin
-          path: build/libs/worldecho-*.jar
+          name: echoclaims-plugin
+          path: build/libs/echoclaims-*.jar
           if-no-files-found: error

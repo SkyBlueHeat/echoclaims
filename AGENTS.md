@@ -1,18 +1,17 @@
-# WorldEcho Agent Instructions
+# EchoClaims Agent Instructions
 
 These instructions apply to every task in this repository.
 
 ## Product intent
 
-WorldEcho is a provider-neutral living-world story engine for Paper servers.
+EchoClaims is a lost-item claim resolution engine for Paper servers.
 
 It must integrate server-owned content rather than replace it:
 
-- mobs and bosses from MythicMobs or other providers
 - items from Oraxen, ItemsAdder, or vanilla
+- mobs and bosses from MythicMobs or other providers
 - NPCs from Citizens or other providers
 - models from ModelEngine
-- factions and economies from optional plugins
 
 The core must never assume a particular provider.
 
@@ -24,14 +23,14 @@ The core must never assume a particular provider.
 4. The core plugin must start successfully when no external plugin is installed.
 5. Never call Bukkit/Paper APIs from asynchronous threads unless the API is explicitly documented as thread-safe.
 6. Never perform SQLite reads or writes on the main server thread.
-7. Capture Bukkit data into immutable WorldEcho records on the main thread, then persist or process those records asynchronously.
+7. Capture Bukkit data into immutable EchoClaims records on the main thread, then persist or process those records asynchronously.
 8. No destructive world modification in early sprints.
 9. Every generated consequence must be explainable from recorded causes.
-10. Never silently delete item history, story history, relationships, or player memory.
-11. Prefer stable semantic roles and capabilities over provider-specific IDs in the story engine.
+10. Never silently delete audit history, item history, or claim records.
+11. Prefer stable semantic roles and capabilities over provider-specific IDs in the claim engine.
 12. Do not hardcode player-facing text in Java. Use message keys and locale files.
 13. Admins must be able to disable systems and tune thresholds through configuration.
-14. A bridge failure must disable that bridge, not the WorldEcho core.
+14. A bridge failure must disable that bridge, not the EchoClaims core.
 15. Add tests for pure domain logic and migrations.
 16. Every task must finish with a build, tests, and a concise changed-files report.
 
@@ -69,11 +68,11 @@ The domain package must not import Bukkit, Paper, MythicMobs, Oraxen, ItemsAdder
 ## Security and reliability
 
 - Treat YAML configuration as untrusted input.
-- Validate IDs, roles, capabilities, and scenario definitions.
+- Validate IDs, roles, capabilities, and claim definitions.
 - Use prepared SQL statements.
 - Do not log secret configuration values.
-- Fail closed for incompatible scenarios.
-- Preserve a diagnostic reason when a scenario is rejected.
+- Fail closed for incompatible claim scenarios.
+- Preserve a diagnostic reason when a claim is rejected.
 
 ## Pull request completion criteria
 

@@ -1,203 +1,114 @@
-# WorldEcho Target Architecture
+# EchoClaims Architecture
 
-## Modules
+## Layered Design
 
-The long-term repository may become a multi-module Gradle project:
+```
+paper adapters / listeners / commands
+        ↓
+application services
+        ↓
+domain model
+        ↓
+repository interfaces
 
-```text
-worldecho-api
-worldecho-core
-worldecho-paper
-worldecho-bridge-mythicmobs
-worldecho-bridge-oraxen
-worldecho-bridge-itemsadder
-worldecho-bridge-citizens
-worldecho-bridge-modelengine
-worldecho-testkit
+integration bridges
+        ↓
+provider-neutral integration interfaces
 ```
 
-Sprint 1 remains a single project with package boundaries that can later be extracted.
+The domain package must not import Bukkit, Paper, or any external plugin classes.
 
-## Package responsibilities
+## Package Structure
 
-```text
-dev.worldecho.domain
-  Pure Java domain types and rules. No Bukkit imports.
-
-dev.worldecho.domain.binding
-  Content binding domain types: BindingType, ContentBinding, BindingDiagnostic,
-  BindingRegistry, EnrichedContent. No Bukkit imports.
-
-dev.worldecho.domain.scenario
-  Scenario compatibility and eligibility diagnostics: EligibilityProfile,
-  EligibilityCatalog, EligibilityEvaluator, EligibilityResult, EligibilityDiagnostic,
-  EligibilityFormatter. No Bukkit imports.
-
-dev.worldecho.domain.item
-  Item identity and ownership domain: TrackedItemId, OwnershipSubject,
-  OwnershipSubjectType, OwnershipTransitionReason, TrackedItemRecord,
-  OwnershipLedgerEntry, OwnershipState, OwnershipResult, OwnershipResultStatus,
-  OwnershipTransitionService, IdentityMode, ObservedItemDescriptor,
-  IdentityClassificationResult, ItemIdentityPolicy, LotCompatibilityFingerprint,
-  TrackedItemLot, TrackedItemLotId, LotLineageEntry, LotRelationType,
-  LotOwnershipLedgerEntry, LotOwnershipState, LotOwnershipTransitionService,
-  AutomaticItemIdentityService, ReconciliationCycle, ObservedInventorySlot,
-  ObservedInventorySnapshot, SlotProcessResult, ReconciliationMetrics,
-  DuplicateObservationRegistry. No Bukkit imports.
-
-dev.worldecho.application
-  Use cases: record memory, generate candidate, create story, schedule consequence,
-  enrich content with bindings.
-
-dev.worldecho.persistence
-  Repository interfaces, SQLite implementations, schema migrations, write queue.
-  Includes TrackedItemRepository, OwnershipLedgerRepository,
-  TrackedItemLotRepository, LotOwnershipLedgerRepository and their SQLite impls.
-
-dev.worldecho.integration
-  Provider-neutral contracts and registry.
-
-dev.worldecho.integration.vanilla
-  Vanilla fallback providers.
-
-dev.worldecho.paper
-  Plugin lifecycle, commands, listeners, Bukkit-to-domain mapping.
-
-dev.worldecho.paper.inventory
-  PlayerInventoryReconciler and PlayerInventoryReconciliationScheduler:
-  main-thread inventory snapshot capture and asynchronous processing with
-  per-player coalescing.
-
-dev.worldecho.paper.listener
-  PlayerDeathMemoryListener, PlayerInventoryObservationListener,
-  ItemTransformationListener: event-driven reconciliation triggers and
-  transformation identity continuity.
-
-dev.worldecho.paper.item
-  ItemIdentityAdapter: reads and writes WorldEcho tracked-item IDs on ItemStacks
-  using the Persistent Data Container. Includes writeIdentity for transformation
-  identity continuity.
-
-dev.worldecho.paper.command
-  WorldEchoCommand and ItemCommandHandler: command dispatch, tab completion,
-  async database queries, and message formatting. Includes reconcile and policy
-  subcommands.
-
-dev.worldecho.config
-  Configuration validation and message access.
+```
+io.github.skyblueheat.echoclaims
+├── application/          # Application services
+│   ├── ItemValueScorer   # Pure item scoring
+│   └── StatusService     # Status report aggregation
+├── config/               # Configuration loading and validation
+│   ├── ConfigurationSource
+│   ├── MapConfigurationSource
+│   ├── EchoClaimsSettings
+│   ├── SettingsLoader
+│   ├── SettingsLoadResult
+│   └── MessageCatalog
+├── domain/               # Pure domain model (no Bukkit imports)
+│   ├── audit/            # AuditRecord
+│   ├── claim/            # (empty, reserved for MVP)
+│   ├── content/          # ContentKey, IdentifiedContent, Capability, SemanticRole
+│   ├── incident/         # (empty, reserved for MVP)
+│   ├── item/             # ItemDescriptor, ItemScore, ItemScoreWeights
+│   ├── refund/           # (empty, reserved for MVP)
+│   └── snapshot/         # (empty, reserved for MVP)
+├── integration/          # Provider-neutral integration layer
+│   ├── ContentProvider
+│   ├── EntityContentProvider
+│   ├── ItemContentProvider
+│   ├── IntegrationRegistry
+│   ├── ProviderRegistry
+│   ├── ProviderHealth
+│   ├── ProviderStatus
+│   ├── bukkit/           # Bukkit adapters
+│   │   └── BukkitItems
+│   └── vanilla/          # Vanilla fallback providers
+│       ├── VanillaEntityProvider
+│       └── VanillaItemProvider
+├── paper/                # Paper plugin layer
+│   ├── EchoClaimsPlugin  # Main plugin class
+│   ├── command/
+│   │   └── EchoClaimsCommand
+│   ├── config/
+│   │   └── BukkitConfigurationSource
+│   └── message/
+│       └── PaperMessageService
+└── persistence/          # SQLite persistence
+    ├── AuditRecordRepository
+    ├── SqliteAuditRecordRepository
+    ├── AuditWriteQueue
+    ├── DatabaseManager
+    └── migration/
+        ├── Migration
+        └── SchemaMigrator
 ```
 
-## Provider API sketch
+## Key Design Decisions
 
-```java
-public interface EntityContentProvider {
-    String providerId();
-    boolean isAvailable();
-    boolean supports(Entity entity);
-    Optional<ExternalEntityContent> identify(Entity entity);
-    Optional<Entity> spawn(String contentId, Location location);
-}
-```
+### No database I/O on the main thread
+All SQLite operations run on dedicated worker threads. The write queue uses a
+bounded `ArrayBlockingQueue` so the server thread only performs a non-blocking
+hand-off. The query executor is a single-thread `ExecutorService` for read
+operations.
 
-The final public API should avoid leaking third-party provider classes.
+### Bounded write queue with drop accounting
+When the queue is full, new records are dropped and counted rather than
+applying back-pressure to the server. The `QueueStatus` record exposes
+submitted, written, failed, dropped, and pending counts.
 
-## Persistence strategy
+### Provider isolation
+Each content provider runs in a `ProviderRegistry` with failure isolation.
+A provider that throws repeatedly is suppressed after a configurable failure
+limit, preventing a broken bridge from affecting the core.
 
-### PDC
+### Configuration validation
+All configuration values are validated on load. Invalid values are replaced
+with documented defaults and logged as warnings. Startup never aborts due to
+a configuration error.
 
-Use PDC for lightweight, stable references attached to live Minecraft objects:
+### Forward-only migrations
+Schema migrations are versioned, forward-only, and applied in a transaction.
+The `schema_version` table records what was applied and when.
 
-- WorldEcho item UUID
-- WorldEcho story entity UUID
-- active story instance ID
-- faction ID
-- integration content key
+## Database Schema (v1)
 
-### SQLite
+- `schema_version` — migration tracking
+- `audit_records` — immutable audit log with category, source, details, and timestamp
 
-Use SQLite for durable and queryable state:
+## Planned Domain Areas
 
-- story events
-- story entities
-- relationships
-- item history
-- ownership transitions
-- story instances
-- scheduled consequences
-- faction state
-- region state
-- world history
-- player summaries
+The following packages are intentionally empty and will be populated in the
+first MVP sprint:
 
-### Threading
-
-- Bukkit event data is captured on the server thread.
-- Immutable domain records are handed to an asynchronous single-writer queue.
-- Database access never occurs on the main thread.
-- Results that need Bukkit changes return to the server thread through the scheduler.
-
-## Planned schema
-
-```text
-schema_version
-story_events
-story_entities
-story_relationships
-story_items
-item_ownership
-factions
-faction_memberships
-story_instances
-story_decisions
-scheduled_consequences
-regions
-region_metrics
-world_history
-player_story_state
-content_bindings (in-memory registry loaded from bindings.yml)
-```
-
-## Story scenario format
-
-Eventually scenarios should be data-driven YAML with code-backed actions.
-
-```yaml
-id: stolen_relic_command_chain
-version: 1
-
-trigger:
-  event: player_killed_by_entity
-  requires_drop: true
-
-requirements:
-  killer:
-    roles: [soldier]
-    capabilities: [can-hold-items, can-be-promoted]
-  item:
-    roles: [weapon, legendary-candidate]
-    capabilities: [can-change-owner, can-have-history]
-  faction:
-    command-chain: true
-
-actions:
-  - claim-item
-  - find-superior
-  - transfer-item
-  - create-rivalry
-  - schedule-rumor
-
-fallback:
-  scenario: stolen_item_carrier
-```
-
-## Scenario safety
-
-Every scenario must have:
-
-- explicit eligibility rules
-- a fallback or rejection reason
-- idempotency protection
-- maximum active instance limits
-- cancellation behavior
-- recovery behavior after restart
-- audit events
+- `domain/incident` — discrete events that may produce claims
+- `domain/snapshot` — player inventory state snapshots
+- `domain/claim` — player claim requests
+- `domain/refund` — item restoration records

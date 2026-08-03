@@ -1,35 +1,20 @@
-name: WorldEcho
+name: EchoClaims
 version: '${version}'
-main: dev.worldecho.paper.WorldEchoPlugin
-description: A provider-neutral living-world memory and story engine for Paper servers.
-authors: [WorldEcho]
+main: io.github.skyblueheat.echoclaims.paper.EchoClaimsPlugin
+description: Resolve lost-item claims with server evidence instead of screenshots.
+authors: [SkyBlueHeat]
 api-version: '26.2'
 load: POSTWORLD
 commands:
-  worldecho:
-    description: WorldEcho administration command
-    usage: /worldecho <status|recent|inspect|reload|eligibility|item>
-    aliases: [wecho]
-    permission: worldecho.admin
+  echoclaims:
+    description: EchoClaims administration command
+    usage: /echoclaims <status>
+    aliases: [ec]
+    permission: echoclaims.command.status
 permissions:
-  worldecho.admin:
-    description: Allows administration and diagnostics for WorldEcho
+  echoclaims.admin:
+    description: Allows full administration and diagnostics for EchoClaims
     default: op
-  worldecho.item.inspect:
-    description: Allows inspecting tracked-item identity and ownership
-    default: op
-  worldecho.item.track:
-    description: Allows tracking a new item with a WorldEcho identity
-    default: op
-  worldecho.item.history:
-    description: Allows viewing ownership history for a tracked item
-    default: op
-  worldecho.item.assign:
-    description: Allows administratively assigning ownership of a tracked item
-    default: op
-  worldecho.item.reconcile:
-    description: Allows triggering manual inventory reconciliation
-    default: op
-  worldecho.item.policy:
-    description: Allows inspecting item identity classification policy
+  echoclaims.command.status:
+    description: Allows checking EchoClaims status
     default: op
