@@ -17,6 +17,19 @@ lost-item disputes without relying on player-submitted screenshots.
 - **Java 25**
 - **SQLite** (bundled via sqlite-jdbc, no external database required)
 
+## Validated Environment
+
+EchoClaims has been built and tested on:
+
+- **OS:** Windows 10 amd64
+- **Java:** Eclipse Adoptium Temurin 25.0.4+7 LTS
+- **Paper:** 26.2 build 87
+- **EchoClaims:** 0.1.0-SNAPSHOT
+- **JAR:** `echoclaims-0.1.0-SNAPSHOT.jar`
+
+See [docs/RUNTIME_VALIDATION.md](docs/RUNTIME_VALIDATION.md) for the full
+runtime validation report.
+
 ## Building
 
 ```bash

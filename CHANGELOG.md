@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.1.0-SNAPSHOT] - 2025-08-03
 
+### Verified
+- Paper runtime validation completed on Paper 26.2 build 87 with Java 25
+  (Eclipse Adoptium Temurin 25.0.4+7 LTS) on Windows 10.
+- Plugin loaded and enabled successfully on a clean Paper server.
+- SQLite storage initialized asynchronously at `plugins/EchoClaims/echoclaims.db`.
+- Schema migration version 1 completed successfully.
+- `/echoclaims status` and `/ec status` produced correct output (version, locale,
+  database availability, schema version, queue counts, providers, uptime).
+- Database status reported `ok`; queue pending, failed, and dropped counts were zero.
+- Server shut down cleanly; audit write queue drained without exceptions.
+- No WorldEcho branding appeared in runtime logs, commands, or generated data.
+- No startup, migration, command, database, or shutdown exceptions occurred.
+- Full report: [docs/RUNTIME_VALIDATION.md](docs/RUNTIME_VALIDATION.md)
+
 ### Added
 - EchoClaims plugin bootstrap from WorldEcho infrastructure.
 - Plugin lifecycle (`EchoClaimsPlugin`) with startup and shutdown.

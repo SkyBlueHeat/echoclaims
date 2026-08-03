@@ -73,3 +73,90 @@ source. JUnit 6 is used via the `junitVersion` property in `gradle.properties`.
 2. Add loading logic in `SettingsLoader` with type checking and clamping.
 3. Add the default value to `config.yml`.
 4. Add a test in `SettingsLoaderTest`.
+
+## Local Runtime Validation
+
+After a successful build, validate the plugin on a clean Paper server before
+pushing.
+
+### Prerequisites
+
+- Paper 26.2 (latest build recommended)
+- Java 25 JDK (Eclipse Adoptium Temurin 25.0.4+7 LTS or equivalent)
+- The shaded JAR from `build/libs/echoclaims-0.1.0-SNAPSHOT.jar`
+
+### Procedure
+
+1. **Build the plugin:**
+
+   ```bash
+   ./gradlew clean test shadowJar --rerun-tasks
+   ```
+
+   Confirm: BUILD SUCCESSFUL, all tests pass, smoke test passes.
+
+2. **Prepare a clean Paper server:**
+
+   - Download Paper 26.2 from [papermc.io](https://papermc.io).
+   - Create an empty server directory (e.g. `paper-server/`).
+   - Place the Paper JAR in the server directory.
+   - Accept the EULA (`eula.txt`).
+
+3. **Install EchoClaims:**
+
+   - Copy `build/libs/echoclaims-0.1.0-SNAPSHOT.jar` into `plugins/`.
+   - Do not install any other plugins.
+
+4. **Start the server:**
+
+   ```bash
+   java -jar paper.jar nogui
+   ```
+
+5. **Verify startup:**
+
+   - Check the console for `EchoClaims enabled (v0.1.0-SNAPSHOT)`.
+   - Confirm `plugins/EchoClaims/echoclaims.db` was created.
+   - Confirm `plugins/EchoClaims/config.yml` was created with EchoClaims defaults.
+
+6. **Test commands:**
+
+   - Run `/echoclaims status` and verify output includes:
+     - version, locale, database availability (`ok`), schema version (`1`),
+     - queue pending/written/failed/dropped counts,
+     - provider list (`entity:vanilla=AVAILABLE`, `item:vanilla=AVAILABLE`),
+     - uptime.
+   - Run `/ec status` and confirm the alias produces the same output.
+
+7. **Test shutdown:**
+
+   - Stop the server with `stop`.
+   - Confirm the console shows the audit write queue drained.
+   - Confirm EchoClaims disabled without an exception.
+
+8. **Search logs for errors:**
+
+   Search the server log for:
+
+   ```
+   WorldEcho|Exception|SEVERE|Could not|Failed
+   ```
+
+   The only expected match is the status field `queue.failed: 0`, which is
+   not an error. No actual exception or failure entries should appear.
+
+9. **Clean up:**
+
+   - Do not commit the test server, database, logs, or JAR.
+   - These are excluded by `.gitignore` (`*.db`, `plugins/`, `logs/`, `*.log`).
+
+### Non-Blocking External Warnings
+
+The following warnings may appear in the server log and are produced by Paper
+or its bundled libraries, not by EchoClaims:
+
+- Paper is a few builds behind the latest available build.
+- JOML `sun.misc.Unsafe` deprecation warning.
+- async-profiler native engine unavailable on Windows (Java fallback used).
+
+These do not indicate EchoClaims failures.

@@ -111,6 +111,24 @@ not preserve WorldEcho's story-related tables. This is a new product repository
 and does not need backward compatibility with WorldEcho databases. The
 `schema_version` table structure is reused.
 
+## Runtime Branding Verification
+
+EchoClaims was tested on a clean Paper 26.2 server (build 87) with Java 25
+(Eclipse Adoptium Temurin 25.0.4+7 LTS) on Windows 10. The following was
+confirmed during runtime validation:
+
+- **No WorldEcho branding** appeared in server logs, command output, or
+  generated data files.
+- A log search for `WorldEcho|Exception|SEVERE|Could not|Failed` matched only
+  the normal status field `queue.failed: 0`, which is not an error.
+- The plugin identified itself as `EchoClaims` in all log messages, command
+  output, and the `plugin.yml` registration.
+- The database file was created as `echoclaims.db` (not `worldecho.db`).
+- The configuration file was created as `plugins/EchoClaims/config.yml`.
+- No startup, migration, command, database, or shutdown exceptions occurred.
+
+See [RUNTIME_VALIDATION.md](RUNTIME_VALIDATION.md) for the full report.
+
 ## Remaining Technical Debt
 
 - The `SemanticRole` and `Capability` enums were trimmed but may need further

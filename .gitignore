@@ -15,3 +15,7 @@ build/
 *.db-shm
 *.db-wal
 run/
+plugins/
+logs/
+server.log
+*.log
