@@ -43,6 +43,7 @@ class SettingsLoaderHardeningTest {
             "/claims.db",
             "/var/claims.db",
             "C:\\claims.db",
+            "C:/claims.db",
             "  ",
             ""
     })

@@ -5,7 +5,6 @@ import io.github.skyblueheat.echoclaims.domain.item.ItemScoreWeights;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Objects;
-import java.nio.file.Path;
 
 public record EchoClaimsSettings(
         String locale,
@@ -38,18 +37,27 @@ public record EchoClaimsSettings(
         if (value == null || value.isBlank()) {
             return fallback;
         }
-        String stripped = value.strip();
-        if (stripped.length() > 255) {
+        if (!value.equals(value.strip())) {
             return fallback;
         }
-        String fileName = Path.of(stripped).getFileName().toString();
-        if (!fileName.equals(stripped)) {
+        if (value.length() > 255) {
             return fallback;
         }
-        if (fileName.isBlank() || fileName.equals(".") || fileName.equals("..")) {
+        if (value.equals(".") || value.equals("..") || value.contains("..")) {
             return fallback;
         }
-        return fileName;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '/' || c == '\\' || c == ':' || c == '\0') {
+                return fallback;
+            }
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9')
+                    || c == '.' || c == '_' || c == '-')) {
+                return fallback;
+            }
+        }
+        return value;
     }
 
     public static EchoClaimsSettings defaults() {
