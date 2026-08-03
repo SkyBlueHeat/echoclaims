@@ -50,12 +50,18 @@ source. JUnit 6 is used via the `junitVersion` property in `gradle.properties`.
 
 - **Settings loader tests** — Configuration validation and defaults
 - **Schema migrator tests** — Idempotent migrations and schema correctness
+- **Migration v2 tests** — Evidence tables, indexes, uniqueness constraints
 - **Write queue tests** — Bounded queue, drain on shutdown, failure handling
 - **Provider registry tests** — Priority ordering, failure suppression
 - **Item scorer tests** — Deterministic scoring with configurable weights
-- **Status service tests** — Status report aggregation
+- **Status service tests** — Status report aggregation with evidence metrics
 - **Bundled resources tests** — Config defaults, message parity, branding
 - **Audit repository tests** — Insert, batch insert, and count operations
+- **Domain model tests** — InventorySnapshot, SnapshotItem, Incident validation
+- **MapCodec tests** — Round-trip encoding/decoding with special characters
+- **Deduplication key tests** — Deterministic key generation and time bucketing
+- **Evidence repository tests** — Snapshot and incident CRUD with transactional atomicity
+- **Evidence persistence service tests** — Async persistence, dedup enforcement, shutdown
 
 ## Adding a New Migration
 
@@ -122,19 +128,31 @@ pushing.
 6. **Test commands:**
 
    - Run `/echoclaims status` and verify output includes:
-     - version, locale, database availability (`ok`), schema version (`1`),
+     - version, locale, database availability (`ok`), schema version (`2`),
      - queue pending/written/failed/dropped counts,
+     - evidence accepted/snapshots/incidents/duplicates/failed/rejected/pending counts,
      - provider list (`entity:vanilla=AVAILABLE`, `item:vanilla=AVAILABLE`),
      - uptime.
    - Run `/ec status` and confirm the alias produces the same output.
+   - Run `/echoclaims incidents <player>` to list recent incidents.
+   - Run `/echoclaims incident <uuid>` to view a single incident.
+   - Run `/echoclaims snapshot <uuid>` to view a snapshot.
 
-7. **Test shutdown:**
+7. **Test evidence capture:**
+
+   - Have a player die (e.g. fall damage, mob kill).
+   - Run `/echoclaims incidents <player>` and verify an incident appears.
+   - Copy the incident UUID and run `/echoclaims incident <uuid>` to see details.
+   - Copy the pre-event snapshot UUID and run `/echoclaims snapshot <uuid>` to see items.
+   - Run `/echoclaims status` and verify evidence metrics are non-zero.
+
+8. **Test shutdown:**
 
    - Stop the server with `stop`.
    - Confirm the console shows the audit write queue drained.
    - Confirm EchoClaims disabled without an exception.
 
-8. **Search logs for errors:**
+9. **Search logs for errors:**
 
    Search the server log for:
 
@@ -145,7 +163,7 @@ pushing.
    The only expected match is the status field `queue.failed: 0`, which is
    not an error. No actual exception or failure entries should appear.
 
-9. **Clean up:**
+10. **Clean up:**
 
    - Do not commit the test server, database, logs, or JAR.
    - These are excluded by `.gitignore` (`*.db`, `plugins/`, `logs/`, `*.log`).

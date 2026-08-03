@@ -54,3 +54,16 @@ persistence:
   write-queue-capacity: 2000
   # Records written per transaction.
   write-batch-size: 64
+
+evidence:
+  capture:
+    # Capture inventory snapshots on player death.
+    player-death: true
+    # Capture a post-respawn snapshot after PlayerRespawnEvent.
+    post-respawn: true
+  # Maximum number of results returned by evidence lookup commands.
+  max-recent-results: 10
+  # Maximum serialized item payload size in bytes (before Base64 encoding).
+  max-item-payload-bytes: 65536
+  # Maximum queued evidence capture tasks before new ones are rejected.
+  queue-capacity: 256

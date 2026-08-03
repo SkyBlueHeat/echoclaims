@@ -38,7 +38,12 @@ public final class SettingsLoader {
                 ),
                 integer(source, warnings, "persistence.write-queue-capacity", 2_000, 16, 100_000),
                 integer(source, warnings, "persistence.write-batch-size", 64, 1, 1_000),
-                bool(source, warnings, "debug", false)
+                bool(source, warnings, "debug", false),
+                bool(source, warnings, "evidence.capture.player-death", true),
+                bool(source, warnings, "evidence.capture.post-respawn", true),
+                integer(source, warnings, "evidence.max-recent-results", 10, 1, 100),
+                integer(source, warnings, "evidence.max-item-payload-bytes", 65_536, 256, 1_048_576),
+                integer(source, warnings, "evidence.queue-capacity", 256, 16, 10_000)
         );
 
         return new SettingsLoadResult(settings, warnings);

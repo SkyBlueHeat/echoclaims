@@ -1,20 +1,30 @@
 package io.github.skyblueheat.echoclaims.paper;
 
+import io.github.skyblueheat.echoclaims.application.EvidenceLookupService;
+import io.github.skyblueheat.echoclaims.application.EvidenceMetrics;
+import io.github.skyblueheat.echoclaims.application.EvidencePersistenceService;
 import io.github.skyblueheat.echoclaims.application.ItemValueScorer;
 import io.github.skyblueheat.echoclaims.application.StatusService;
 import io.github.skyblueheat.echoclaims.config.EchoClaimsSettings;
 import io.github.skyblueheat.echoclaims.config.SettingsLoadResult;
 import io.github.skyblueheat.echoclaims.config.SettingsLoader;
 import io.github.skyblueheat.echoclaims.integration.IntegrationRegistry;
+import io.github.skyblueheat.echoclaims.integration.ItemSerializer;
+import io.github.skyblueheat.echoclaims.integration.bukkit.BukkitItemSerializer;
 import io.github.skyblueheat.echoclaims.integration.vanilla.VanillaEntityProvider;
 import io.github.skyblueheat.echoclaims.integration.vanilla.VanillaItemProvider;
 import io.github.skyblueheat.echoclaims.paper.command.EchoClaimsCommand;
 import io.github.skyblueheat.echoclaims.paper.config.BukkitConfigurationSource;
+import io.github.skyblueheat.echoclaims.paper.listener.DeathCaptureService;
 import io.github.skyblueheat.echoclaims.paper.message.PaperMessageService;
 import io.github.skyblueheat.echoclaims.persistence.AuditRecordRepository;
 import io.github.skyblueheat.echoclaims.persistence.AuditWriteQueue;
 import io.github.skyblueheat.echoclaims.persistence.DatabaseManager;
+import io.github.skyblueheat.echoclaims.persistence.IncidentRepository;
+import io.github.skyblueheat.echoclaims.persistence.InventorySnapshotRepository;
 import io.github.skyblueheat.echoclaims.persistence.SqliteAuditRecordRepository;
+import io.github.skyblueheat.echoclaims.persistence.SqliteIncidentRepository;
+import io.github.skyblueheat.echoclaims.persistence.SqliteInventorySnapshotRepository;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -35,11 +45,18 @@ public final class EchoClaimsPlugin extends JavaPlugin {
     private volatile PaperMessageService messages;
     private volatile ItemValueScorer itemValueScorer;
     private volatile StatusService statusService;
+    private volatile EvidenceLookupService evidenceLookupService;
+    private volatile ItemSerializer itemSerializer;
 
     private IntegrationRegistry integrations;
     private DatabaseManager databaseManager;
     private AuditRecordRepository auditRepository;
     private AuditWriteQueue writeQueue;
+    private InventorySnapshotRepository snapshotRepository;
+    private IncidentRepository incidentRepository;
+    private EvidenceMetrics evidenceMetrics;
+    private EvidencePersistenceService evidenceService;
+    private DeathCaptureService deathCaptureService;
     private ExecutorService queryExecutor;
     private long startedAt;
 
@@ -69,6 +86,17 @@ public final class EchoClaimsPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         enabled = false;
+
+        if (deathCaptureService != null) {
+            deathCaptureService.disable();
+        }
+
+        if (evidenceService != null) {
+            boolean drained = evidenceService.shutdown(settings.shutdownTimeout());
+            if (!drained) {
+                getLogger().warning("Evidence persistence service did not drain in time");
+            }
+        }
 
         if (writeQueue != null) {
             boolean drained = writeQueue.shutdown(settings.shutdownTimeout());
@@ -145,6 +173,25 @@ public final class EchoClaimsPlugin extends JavaPlugin {
         );
         writeQueue.start();
 
+        snapshotRepository = new SqliteInventorySnapshotRepository(databaseManager);
+        incidentRepository = new SqliteIncidentRepository(databaseManager);
+
+        evidenceMetrics = new EvidenceMetrics();
+        evidenceService = new EvidencePersistenceService(
+                snapshotRepository,
+                incidentRepository,
+                evidenceMetrics,
+                throwable -> getLogger().log(Level.SEVERE, "Evidence persistence failed", throwable),
+                settings.evidenceQueueCapacity(),
+                getLogger()
+        );
+
+        evidenceLookupService = new EvidenceLookupService(
+                incidentRepository,
+                snapshotRepository,
+                settings.maxRecentResults()
+        );
+
         integrations = new IntegrationRegistry((providerId, throwable) -> getLogger().log(
                 Level.WARNING, "Content provider '" + providerId + "' failed", throwable));
         integrations.registerEntityProvider(new VanillaEntityProvider());
@@ -153,11 +200,24 @@ public final class EchoClaimsPlugin extends JavaPlugin {
         getLogger().info("Content providers: "
                 + String.join(", ", integrations.describeProviders()));
 
+        itemSerializer = new BukkitItemSerializer(settings.maxItemPayloadBytes());
+
+        deathCaptureService = new DeathCaptureService(
+                () -> settings,
+                itemSerializer,
+                itemValueScorer,
+                integrations,
+                evidenceService,
+                getLogger()
+        );
+        getServer().getPluginManager().registerEvents(deathCaptureService, this);
+
         statusService = new StatusService(
                 () -> settings,
                 databaseManager,
                 writeQueue,
                 integrations,
+                evidenceService,
                 getPluginMeta().getVersion(),
                 startedAt
         );
@@ -185,8 +245,10 @@ public final class EchoClaimsPlugin extends JavaPlugin {
                 this,
                 () -> messages,
                 () -> statusService,
+                () -> evidenceLookupService,
                 queryExecutor,
-                runnable -> getServer().getScheduler().runTask(this, runnable)
+                runnable -> getServer().getScheduler().runTask(this, runnable),
+                getLogger()
         );
         command.setExecutor(executor);
         command.setTabCompleter(executor);

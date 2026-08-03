@@ -34,6 +34,7 @@ class StatusServiceHardeningTest {
                 dbManager,
                 queue,
                 integrations,
+                null,
                 "0.1.0-SNAPSHOT",
                 System.currentTimeMillis()
         );
@@ -62,6 +63,7 @@ class StatusServiceHardeningTest {
                 dbManager,
                 queue,
                 integrations,
+                null,
                 "0.1.0-SNAPSHOT",
                 System.currentTimeMillis()
         );
@@ -91,6 +93,7 @@ class StatusServiceHardeningTest {
                 dbManager,
                 queue,
                 integrations,
+                null,
                 "0.1.0-SNAPSHOT",
                 futureTime
         );
