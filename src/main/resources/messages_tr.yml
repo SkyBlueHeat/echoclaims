@@ -4,6 +4,7 @@
 prefix: "<gray>[<aqua>EchoClaims</aqua>]</gray> "
 
 no-permission: "<red>Bu komutu kullanma yetkiniz yok.</red>"
+not-ready: "<yellow>EchoClaims hâlâ başlatılıyor. Lütfen birazdan tekrar deneyin.</yellow>"
 usage: "<white>Kullanım: /echoclaims status</white>"
 unknown-subcommand: "<red>Bilinmeyen alt komut. Yardım için /echoclaims yazın.</red>"
 

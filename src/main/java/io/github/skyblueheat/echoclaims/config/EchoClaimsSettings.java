@@ -5,7 +5,6 @@ import io.github.skyblueheat.echoclaims.domain.item.ItemScoreWeights;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.Set;
 
 public record EchoClaimsSettings(
         String locale,
@@ -15,8 +14,7 @@ public record EchoClaimsSettings(
         Duration shutdownTimeout,
         int writeQueueCapacity,
         int writeBatchSize,
-        boolean debugLogging,
-        int retentionDays
+        boolean debugLogging
 ) {
 
     public EchoClaimsSettings {
@@ -26,15 +24,40 @@ public record EchoClaimsSettings(
                 itemScoreWeights,
                 ItemScoreWeights::defaults
         );
-        sqliteFile = sqliteFile == null || sqliteFile.isBlank()
-                ? "echoclaims.db"
-                : sqliteFile.strip();
+        sqliteFile = validateSqliteFile(sqliteFile);
         shutdownTimeout = shutdownTimeout == null
                 ? Duration.ofSeconds(10)
                 : shutdownTimeout;
         writeQueueCapacity = Math.max(16, writeQueueCapacity);
         writeBatchSize = Math.max(1, writeBatchSize);
-        retentionDays = Math.max(0, retentionDays);
+    }
+
+    private static String validateSqliteFile(String value) {
+        String fallback = "echoclaims.db";
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        if (!value.equals(value.strip())) {
+            return fallback;
+        }
+        if (value.length() > 255) {
+            return fallback;
+        }
+        if (value.equals(".") || value.equals("..") || value.contains("..")) {
+            return fallback;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '/' || c == '\\' || c == ':' || c == '\0') {
+                return fallback;
+            }
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9')
+                    || c == '.' || c == '_' || c == '-')) {
+                return fallback;
+            }
+        }
+        return value;
     }
 
     public static EchoClaimsSettings defaults() {

@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 
@@ -29,6 +30,7 @@ public final class ProviderRegistry<S> {
     private final Map<String, AtomicLong> failures = new ConcurrentHashMap<>();
     private final BiConsumer<String, Throwable> failureHandler;
     private final int failureLimit;
+    private final AtomicBoolean frozen = new AtomicBoolean(false);
 
     public ProviderRegistry(BiConsumer<String, Throwable> failureHandler) {
         this(failureHandler, DEFAULT_FAILURE_LIMIT);
@@ -41,21 +43,34 @@ public final class ProviderRegistry<S> {
 
     public void register(ContentProvider<S> provider) {
         Objects.requireNonNull(provider, "provider");
-        if (providers.stream().anyMatch(known -> known.providerId().equals(provider.providerId()))) {
-            throw new IllegalStateException(
-                    "Provider already registered: " + provider.providerId());
+        synchronized (this) {
+            if (frozen.get()) {
+                throw new IllegalStateException("ProviderRegistry is frozen; no further registrations allowed");
+            }
+            if (providers.stream().anyMatch(known -> known.providerId().equals(provider.providerId()))) {
+                throw new IllegalStateException(
+                        "Provider already registered: " + provider.providerId());
+            }
+
+            List<ContentProvider<S>> ordered = new ArrayList<>(providers);
+            ordered.add(provider);
+            ordered.sort(
+                    Comparator.comparingInt(ContentProvider<S>::priority).reversed()
+                            .thenComparing(ContentProvider::providerId)
+            );
+
+            providers.clear();
+            providers.addAll(ordered);
+            failures.putIfAbsent(provider.providerId(), new AtomicLong());
         }
+    }
 
-        List<ContentProvider<S>> ordered = new ArrayList<>(providers);
-        ordered.add(provider);
-        ordered.sort(
-                Comparator.comparingInt(ContentProvider<S>::priority).reversed()
-                        .thenComparing(ContentProvider::providerId)
-        );
+    public synchronized void freeze() {
+        frozen.set(true);
+    }
 
-        providers.clear();
-        providers.addAll(ordered);
-        failures.putIfAbsent(provider.providerId(), new AtomicLong());
+    public boolean isFrozen() {
+        return frozen.get();
     }
 
     public Optional<IdentifiedContent> identify(S source) {

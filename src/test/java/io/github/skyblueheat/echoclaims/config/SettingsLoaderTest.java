@@ -21,7 +21,6 @@ class SettingsLoaderTest {
         assertEquals(2000, settings.writeQueueCapacity());
         assertEquals(64, settings.writeBatchSize());
         assertFalse(settings.debugLogging());
-        assertEquals(30, settings.retentionDays());
     }
 
     @Test

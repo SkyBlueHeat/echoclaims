@@ -56,6 +56,8 @@ class StatusServiceTest {
         assertEquals(0, report.writtenCount());
         assertEquals(0, report.failedCount());
         assertEquals(0, report.droppedCount());
+        assertEquals(0, report.overflowDroppedCount());
+        assertEquals(0, report.abandonedCount());
         assertTrue(report.providers().isEmpty());
         assertTrue(report.uptimeMillis() >= 5000);
 

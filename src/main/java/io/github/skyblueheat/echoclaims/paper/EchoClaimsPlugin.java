@@ -20,11 +20,9 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.logging.Level;
 
 /**
@@ -32,8 +30,7 @@ import java.util.logging.Level;
  */
 public final class EchoClaimsPlugin extends JavaPlugin {
 
-    private static final long STORAGE_INIT_TIMEOUT_SECONDS = 30;
-
+    private volatile boolean enabled = false;
     private volatile EchoClaimsSettings settings;
     private volatile PaperMessageService messages;
     private volatile ItemValueScorer itemValueScorer;
@@ -48,6 +45,7 @@ public final class EchoClaimsPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        enabled = true;
         startedAt = System.currentTimeMillis();
         saveDefaultConfig();
         applyConfiguration().forEach(warning -> getLogger().warning("Configuration: " + warning));
@@ -61,42 +59,17 @@ public final class EchoClaimsPlugin extends JavaPlugin {
         databaseManager = new DatabaseManager(
                 getDataFolder().toPath().resolve(settings.sqliteFile()));
 
-        if (!initializeStorage()) {
-            getServer().getPluginManager().disablePlugin(this);
-            return;
-        }
-
-        auditRepository = new SqliteAuditRecordRepository(databaseManager);
-        writeQueue = new AuditWriteQueue(
-                auditRepository,
-                throwable -> getLogger().log(Level.SEVERE, "Audit write failed", throwable),
-                settings.writeQueueCapacity(),
-                settings.writeBatchSize()
-        );
-        writeQueue.start();
-
-        integrations = new IntegrationRegistry((providerId, throwable) -> getLogger().log(
-                Level.WARNING, "Content provider '" + providerId + "' failed", throwable));
-        integrations.registerEntityProvider(new VanillaEntityProvider());
-        integrations.registerItemProvider(new VanillaItemProvider());
-        getLogger().info("Content providers: "
-                + String.join(", ", integrations.describeProviders()));
-
-        statusService = new StatusService(
-                () -> settings,
-                databaseManager,
-                writeQueue,
-                integrations,
-                getPluginMeta().getVersion(),
-                startedAt
-        );
-
         registerCommand();
-        getLogger().info("EchoClaims enabled (v" + getPluginMeta().getVersion() + ")");
+        getLogger().info("EchoClaims enabling (v" + getPluginMeta().getVersion()
+                + ") — storage initializing asynchronously");
+
+        queryExecutor.submit(this::initializeStorageAsync);
     }
 
     @Override
     public void onDisable() {
+        enabled = false;
+
         if (writeQueue != null) {
             boolean drained = writeQueue.shutdown(settings.shutdownTimeout());
             AuditWriteQueue.QueueStatus status = writeQueue.status();
@@ -105,7 +78,9 @@ public final class EchoClaimsPlugin extends JavaPlugin {
             } else {
                 getLogger().warning("Audit write queue did not drain in time; pending="
                         + status.pending() + " failed=" + status.failed()
-                        + " dropped=" + status.dropped());
+                        + " dropped=" + status.dropped()
+                        + " overflowDropped=" + status.overflowDropped()
+                        + " abandoned=" + status.abandoned());
             }
         }
 
@@ -136,30 +111,58 @@ public final class EchoClaimsPlugin extends JavaPlugin {
     }
 
     /**
-     * Runs migrations on the storage thread and waits for the result.
-     *
-     * <p>Enable is not a tick, so waiting here is safe, and keeping the JDBC work off the
-     * server thread preserves the rule that SQLite is only ever touched by EchoClaims
-     * worker threads.</p>
+     * Runs migrations on the storage thread. Does not block the main server thread.
+     * Post-init setup is scheduled back on the main thread via {@code runTask}.
      */
-    private boolean initializeStorage() {
+    private void initializeStorageAsync() {
         try {
-            int applied = queryExecutor
-                    .submit(() -> databaseManager.initialize())
-                    .get(STORAGE_INIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            getLogger().info("Storage ready at " + databaseManager.databasePath()
-                    + " (" + applied + " migration(s) applied)");
-            return true;
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            getLogger().severe("Interrupted while preparing EchoClaims storage");
-            return false;
-        } catch (ExecutionException | TimeoutException exception) {
+            int applied = databaseManager.initialize();
+            getServer().getScheduler().runTask(this, () -> onStorageReady(applied));
+        } catch (Exception exception) {
             getLogger().log(Level.SEVERE,
                     "EchoClaims could not initialize its database and will stay disabled",
                     exception);
-            return false;
+            getServer().getScheduler().runTask(this,
+                    () -> getServer().getPluginManager().disablePlugin(this));
         }
+    }
+
+    private void onStorageReady(int applied) {
+        if (!enabled) {
+            getLogger().warning("Storage initialized after plugin disable — discarding");
+            return;
+        }
+
+        getLogger().info("Storage ready at " + databaseManager.databasePath()
+                + " (" + applied + " migration(s) applied)");
+
+        auditRepository = new SqliteAuditRecordRepository(databaseManager);
+        writeQueue = new AuditWriteQueue(
+                auditRepository,
+                throwable -> getLogger().log(Level.SEVERE, "Audit write failed", throwable),
+                settings.writeQueueCapacity(),
+                settings.writeBatchSize()
+        );
+        writeQueue.start();
+
+        integrations = new IntegrationRegistry((providerId, throwable) -> getLogger().log(
+                Level.WARNING, "Content provider '" + providerId + "' failed", throwable));
+        integrations.registerEntityProvider(new VanillaEntityProvider());
+        integrations.registerItemProvider(new VanillaItemProvider());
+        integrations.freeze();
+        getLogger().info("Content providers: "
+                + String.join(", ", integrations.describeProviders()));
+
+        statusService = new StatusService(
+                () -> settings,
+                databaseManager,
+                writeQueue,
+                integrations,
+                getPluginMeta().getVersion(),
+                startedAt
+        );
+
+        getLogger().info("EchoClaims enabled (v" + getPluginMeta().getVersion() + ")");
     }
 
     private List<String> applyConfiguration() {
@@ -181,7 +184,9 @@ public final class EchoClaimsPlugin extends JavaPlugin {
         EchoClaimsCommand executor = new EchoClaimsCommand(
                 this,
                 () -> messages,
-                () -> statusService
+                () -> statusService,
+                queryExecutor,
+                runnable -> getServer().getScheduler().runTask(this, runnable)
         );
         command.setExecutor(executor);
         command.setTabCompleter(executor);

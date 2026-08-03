@@ -38,8 +38,7 @@ public final class SettingsLoader {
                 ),
                 integer(source, warnings, "persistence.write-queue-capacity", 2_000, 16, 100_000),
                 integer(source, warnings, "persistence.write-batch-size", 64, 1, 1_000),
-                bool(source, warnings, "debug", false),
-                integer(source, warnings, "retention.days", 30, 0, 3650)
+                bool(source, warnings, "debug", false)
         );
 
         return new SettingsLoadResult(settings, warnings);

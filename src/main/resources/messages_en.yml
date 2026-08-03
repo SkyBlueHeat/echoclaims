@@ -4,6 +4,7 @@
 prefix: "<gray>[<aqua>EchoClaims</aqua>]</gray> "
 
 no-permission: "<red>You do not have permission to use this command.</red>"
+not-ready: "<yellow>EchoClaims is still initializing. Please try again in a moment.</yellow>"
 usage: "<white>Usage: /echoclaims status</white>"
 unknown-subcommand: "<red>Unknown subcommand. Use /echoclaims for help.</red>"
 

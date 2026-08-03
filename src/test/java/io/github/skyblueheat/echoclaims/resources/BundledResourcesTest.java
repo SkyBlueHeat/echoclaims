@@ -49,7 +49,7 @@ class BundledResourcesTest {
         YamlConfiguration english = read("messages_en.yml");
 
         for (String key : Set.of(
-                "prefix", "no-permission", "usage", "unknown-subcommand",
+                "prefix", "no-permission", "not-ready", "usage", "unknown-subcommand",
                 "status-header", "status-line")) {
             assertTrue(english.isString(key), () -> "missing message key: " + key);
         }

@@ -67,6 +67,8 @@ public final class StatusService {
                 queue.written(),
                 queue.failed(),
                 queue.dropped(),
+                queue.overflowDropped(),
+                queue.abandoned(),
                 integrations.describeProviders(),
                 uptimeMillis
         );
@@ -81,6 +83,8 @@ public final class StatusService {
             long writtenCount,
             long failedCount,
             long droppedCount,
+            long overflowDroppedCount,
+            long abandonedCount,
             List<String> providers,
             long uptimeMillis
     ) {

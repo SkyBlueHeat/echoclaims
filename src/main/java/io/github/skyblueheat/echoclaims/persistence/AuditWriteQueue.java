@@ -11,6 +11,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
@@ -37,7 +38,10 @@ public final class AuditWriteQueue implements AutoCloseable {
     private final AtomicLong written = new AtomicLong();
     private final AtomicLong failed = new AtomicLong();
     private final AtomicLong dropped = new AtomicLong();
+    private final AtomicLong overflowDropped = new AtomicLong();
+    private final AtomicLong abandoned = new AtomicLong();
 
+    private final AtomicBoolean started = new AtomicBoolean(false);
     private volatile boolean running = true;
 
     public AuditWriteQueue(
@@ -57,6 +61,9 @@ public final class AuditWriteQueue implements AutoCloseable {
     }
 
     public void start() {
+        if (!started.compareAndSet(false, true)) {
+            throw new IllegalStateException("AuditWriteQueue already started");
+        }
         writer.start();
     }
 
@@ -75,7 +82,7 @@ public final class AuditWriteQueue implements AutoCloseable {
             return true;
         }
 
-        dropped.incrementAndGet();
+        overflowDropped.incrementAndGet();
         return false;
     }
 
@@ -85,6 +92,8 @@ public final class AuditWriteQueue implements AutoCloseable {
                 written.get(),
                 failed.get(),
                 dropped.get(),
+                overflowDropped.get(),
+                abandoned.get(),
                 queue.size()
         );
     }
@@ -96,11 +105,20 @@ public final class AuditWriteQueue implements AutoCloseable {
      */
     public boolean shutdown(Duration timeout) {
         running = false;
+
+        if (!started.get()) {
+            return queue.isEmpty();
+        }
+
         writer.interrupt();
 
         try {
             boolean finished = stopped.await(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            return finished && queue.isEmpty();
+            AuditRecord late;
+            while ((late = queue.poll()) != null) {
+                abandoned.incrementAndGet();
+            }
+            return finished;
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             return false;
@@ -154,6 +172,8 @@ public final class AuditWriteQueue implements AutoCloseable {
             long written,
             long failed,
             long dropped,
+            long overflowDropped,
+            long abandoned,
             int pending
     ) {
     }

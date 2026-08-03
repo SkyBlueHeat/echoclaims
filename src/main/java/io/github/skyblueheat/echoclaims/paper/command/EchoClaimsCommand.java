@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
@@ -30,15 +32,21 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
     private final Plugin plugin;
     private final Supplier<PaperMessageService> messageSupplier;
     private final Supplier<StatusService> statusServiceSupplier;
+    private final ExecutorService queryExecutor;
+    private final Consumer<Runnable> syncScheduler;
 
     public EchoClaimsCommand(
             Plugin plugin,
             Supplier<PaperMessageService> messageSupplier,
-            Supplier<StatusService> statusServiceSupplier
+            Supplier<StatusService> statusServiceSupplier,
+            ExecutorService queryExecutor,
+            Consumer<Runnable> syncScheduler
     ) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.messageSupplier = Objects.requireNonNull(messageSupplier, "messageSupplier");
         this.statusServiceSupplier = Objects.requireNonNull(statusServiceSupplier, "statusServiceSupplier");
+        this.queryExecutor = Objects.requireNonNull(queryExecutor, "queryExecutor");
+        this.syncScheduler = Objects.requireNonNull(syncScheduler, "syncScheduler");
     }
 
     @Override
@@ -67,8 +75,18 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
     }
 
     private void status(CommandSender sender) {
-        StatusService.StatusReport report = statusServiceSupplier.get().collect();
+        StatusService service = statusServiceSupplier.get();
+        if (service == null) {
+            messages().send(sender, "not-ready");
+            return;
+        }
+        queryExecutor.submit(() -> {
+            StatusService.StatusReport report = service.collect();
+            syncScheduler.accept(() -> sendStatusReport(sender, report));
+        });
+    }
 
+    private void sendStatusReport(CommandSender sender, StatusService.StatusReport report) {
         messages().send(sender, "status-header");
         line(sender, "version", report.version());
         line(sender, "locale", report.locale());
@@ -78,6 +96,8 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
         line(sender, "queue.written", Long.toString(report.writtenCount()));
         line(sender, "queue.failed", Long.toString(report.failedCount()));
         line(sender, "queue.dropped", Long.toString(report.droppedCount()));
+        line(sender, "queue.overflow-dropped", Long.toString(report.overflowDroppedCount()));
+        line(sender, "queue.abandoned", Long.toString(report.abandonedCount()));
         line(sender, "providers", String.join(", ", report.providers()));
         line(sender, "uptime", formatUptime(report.uptimeMillis()));
     }

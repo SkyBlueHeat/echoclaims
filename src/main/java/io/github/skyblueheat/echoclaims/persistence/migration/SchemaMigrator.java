@@ -37,6 +37,16 @@ public final class SchemaMigrator {
             ))
     );
 
+    static {
+        java.util.Set<Integer> seen = new java.util.HashSet<>();
+        for (Migration migration : MIGRATIONS) {
+            if (!seen.add(migration.version())) {
+                throw new IllegalStateException(
+                        "Duplicate migration version: " + migration.version());
+            }
+        }
+    }
+
     private SchemaMigrator() {
     }
 
