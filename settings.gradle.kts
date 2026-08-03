@@ -10,4 +10,4 @@ pluginManagement {
     }
 }
 
-rootProject.name = "worldecho"
+rootProject.name = "echoclaims"

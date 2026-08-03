@@ -17,6 +17,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Ensure gradlew is executable
+        run: chmod +x gradlew
+
       - name: Set up Java 25
         uses: actions/setup-java@v4
         with:
@@ -44,6 +47,6 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: worldecho-plugin
-          path: build/libs/worldecho-*.jar
+          name: echoclaims-plugin
+          path: build/libs/echoclaims-*.jar
           if-no-files-found: error

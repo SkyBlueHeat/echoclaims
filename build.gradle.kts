@@ -3,7 +3,7 @@ plugins {
     id("com.gradleup.shadow") version "9.6.1"
 }
 
-group = "dev.worldecho"
+group = "io.github.skyblueheat.echoclaims"
 version = "0.1.0-SNAPSHOT"
 
 val paperApiVersion = project.property("paperApiVersion").toString()
