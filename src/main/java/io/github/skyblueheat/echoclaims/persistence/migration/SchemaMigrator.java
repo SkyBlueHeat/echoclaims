@@ -119,6 +119,70 @@ public final class SchemaMigrator {
                     CREATE INDEX IF NOT EXISTS idx_incidents_incident_type
                     ON incidents(incident_type)
                     """
+            )),
+            new Migration(3, "claim foundation: claims and claim audit entries", List.of(
+                    """
+                    CREATE TABLE IF NOT EXISTS claims (
+                        id TEXT PRIMARY KEY,
+                        public_reference TEXT NOT NULL UNIQUE,
+                        incident_id TEXT NOT NULL,
+                        player_uuid TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'DRAFT',
+                        source TEXT NOT NULL DEFAULT 'PLAYER_COMMAND',
+                        description TEXT NOT NULL DEFAULT '',
+                        created_at INTEGER NOT NULL,
+                        submitted_at INTEGER NOT NULL DEFAULT 0,
+                        cancelled_at INTEGER NOT NULL DEFAULT 0,
+                        version INTEGER NOT NULL DEFAULT 0,
+                        metadata TEXT NOT NULL DEFAULT '',
+                        FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE RESTRICT
+                    )
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_claims_player_uuid
+                    ON claims(player_uuid)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_claims_status
+                    ON claims(status)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_claims_incident_id
+                    ON claims(incident_id)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_claims_created_at
+                    ON claims(created_at DESC)
+                    """,
+                    """
+                    CREATE TABLE IF NOT EXISTS claim_audit_entries (
+                        id TEXT PRIMARY KEY,
+                        claim_id TEXT NOT NULL,
+                        actor_type TEXT NOT NULL,
+                        actor_uuid TEXT,
+                        action TEXT NOT NULL,
+                        reason TEXT NOT NULL DEFAULT '',
+                        recorded_at INTEGER NOT NULL,
+                        claim_version INTEGER NOT NULL,
+                        metadata TEXT NOT NULL DEFAULT '',
+                        FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE RESTRICT
+                    )
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_claim_audit_claim_id
+                    ON claim_audit_entries(claim_id)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_claim_audit_recorded_at
+                    ON claim_audit_entries(recorded_at DESC)
+                    """
+            )),
+            new Migration(4, "claim duplicate active protection: partial unique index", List.of(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_claims_active_unique
+                    ON claims(incident_id, player_uuid)
+                    WHERE status IN ('DRAFT', 'SUBMITTED')
+                    """
             ))
     );
 
