@@ -12,13 +12,19 @@ administrative query commands.
 ./gradlew clean test shadowJar
 ```
 
-**Expected result**: BUILD SUCCESSFUL with 246 passed, 16 skipped, 0 failed,
+**Expected result**: BUILD SUCCESSFUL with 246 passed, 14 skipped, 0 failed,
 and a fat JAR produced at `build/libs/echoclaims-<version>.jar`.
 
-The 16 skipped tests are `BukkitItemSerializer` round-trip tests gated by
+The 14 skipped tests are `BukkitItemSerializer` round-trip tests gated by
 `@EnabledIfSystemProperty(named = "echoclaims.paper.runtime", matches = "true")`.
 They require a running Paper server and are executed by the Paper-backed
 integration test task (see below).
+
+> **Note**: A naive `grep -c SKIPPED` on Gradle output reports 16 matches
+> because two PASSED tests have "Skipped" in their method names:
+> `IncidentTest.blankMetadataKeysAreSkipped()` and
+> `MapCodecTest.malformedIntValuesAreSkipped()`. The JUnit XML reports
+> confirm the true skip count is 14.
 
 ## Paper-Backed Integration Test
 
