@@ -210,3 +210,31 @@ The following are explicitly **not** implemented in MVP-02:
 - MySQL or external database support
 - Automated claim resolution
 - Description updates after creation
+
+## Paper Integration Test
+
+- **Command**: `./gradlew paperIntegrationTest`
+- **Result**: 14 passed, 0 failed, 0 skipped
+- **Coverage**: Serialization round-trip tests on disposable Paper server
+
+## Runtime Validation
+
+- **Command**: `./gradlew runtimeValidation`
+- **Result**: 36 passed, 0 failed, 0 skipped
+- **Coverage**: Full claim flow on disposable Paper server with headless bot
+  - Plugin load and ready checks
+  - Schema migration v1-v4 verification (claims tables, partial unique index)
+  - Evidence capture (3 deaths, snapshots, incidents, metadata)
+  - Claim flow: claimable list, create by index, list, view, submit, cancel
+  - Claim DB verification: DRAFT -> SUBMITTED -> CANCELLED states
+  - Duplicate active claim rejection after cancellation
+  - Audit trail verification (CREATED, SUBMITTED, CANCELLED actions)
+  - No exceptions in server log
+  - Clean shutdown drain and no remaining threads
+
+## Production JAR Inspection
+
+- **No test/validation classes**: JAR contains only `io/github/skyblueheat/echoclaims` production classes and `org/sqlite` (sqlite-jdbc)
+- **No external dependencies**: Only sqlite-jdbc is shaded; no other third-party libraries
+- **No local paths**: No `C:\` or user-specific paths embedded in JAR contents
+- **Smoke test**: `shadowJarSmokeTest` passes — SQLite database opens successfully using only the shaded JAR
