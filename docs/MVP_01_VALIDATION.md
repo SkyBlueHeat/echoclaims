@@ -216,14 +216,14 @@ Paper environment.
 
 ### Headless Client Details
 
-- **Library**: MCProtocolLib (`org.geysermc.mcprotocollib:protocol:26.2-SNAPSHOT`)
+- **Library**: MCProtocolLib (`org.geysermc.mcprotocollib:protocol:26.2-20260709.110151-15`)
 - **Protocol version**: 776 (Minecraft 26.2)
 - **Repository**: OpenCollab Snapshots (`https://repo.opencollab.dev/maven-snapshots/`)
 - **Authentication**: Offline mode (no Microsoft account, no credentials)
 - **Bot username**: `TestBot`
 - **Death handling**: Automatically sends `PERFORM_RESPAWN` on death screen
 
-### Validation Checks (20 total)
+### Validation Checks (24 total)
 
 | # | Check | Description |
 |---|---|---|
@@ -232,7 +232,7 @@ Paper environment.
 | 3 | `schema_migration_v1_v2` | `schema_version` table contains migrations 1 and 2 |
 | 4 | `no_WorldEcho_branding` | No "WorldEcho" string in plugin name or config |
 | 5 | `player_given_items` | Player given stone, bread, enchanted sword, armor, offhand shield |
-| 6 | `first_death_triggered` | Player death and respawn events fired |
+| 6 | `first_death_triggered` | Player death and respawn events fired (keepInventory=false) |
 | 7 | `first_incident_created` | Incident row in DB with `incident_type=PLAYER_DEATH`, `status=OPEN` |
 | 8 | `first_snapshot_contents` | Pre-death snapshot has inventory, armor, offhand, and enchanted items |
 | 9 | `second_death_triggered` | Second death at different location with different inventory |
@@ -242,11 +242,15 @@ Paper environment.
 | 13 | `command_incident` | `/echoclaims incident <uuid>` executes without error |
 | 14 | `command_snapshot` | `/echoclaims snapshot <uuid>` executes without error |
 | 15 | `command_ec_alias` | `/ec status` alias executes without error |
-| 16 | `restart_persistence` | Incidents and snapshots persisted in DB (>= 2 each) |
-| 17 | `migration_idempotency` | `schema_version` still has exactly 2 migrations (no duplicates) |
-| 18 | `no_exceptions` | No EchoClaims exceptions in server log |
-| 19 | `shutdown_drain` | EchoClaims plugin still enabled at shutdown check |
-| 20 | `no_remaining_threads` | No leftover EchoClaims threads |
+| 16 | `keepInventory_false_incident_metadata` | First two incidents record `keepInventory=false` in metadata |
+| 17 | `keepInventory_true_death` | Third death with `keepInventory=true` gamerule, death and respawn fired |
+| 18 | `keepInventory_true_items_retained` | Player retains diamond and iron ingot after respawn with keepInventory=true |
+| 19 | `keepInventory_true_incident_metadata` | Third incident records `keepInventory=true` in metadata |
+| 20 | `restart_persistence` | Incidents and snapshots persisted in DB (>= 3 each) |
+| 21 | `migration_idempotency` | `schema_version` still has exactly 2 migrations (no duplicates) |
+| 22 | `no_exceptions` | No EchoClaims exceptions in server log |
+| 23 | `shutdown_drain` | EchoClaims plugin still enabled at shutdown check |
+| 24 | `no_remaining_threads` | No leftover EchoClaims threads |
 
 ### Results
 
@@ -266,16 +270,20 @@ PASS:command_incidents
 PASS:command_incident
 PASS:command_snapshot
 PASS:command_ec_alias
+PASS:keepInventory_false_incident_metadata
+PASS:keepInventory_true_death
+PASS:keepInventory_true_items_retained
+PASS:keepInventory_true_incident_metadata
 PASS:restart_persistence
 PASS:migration_idempotency
 PASS:no_exceptions
 PASS:shutdown_drain
 PASS:no_remaining_threads
-SUMMARY:executed=20,passed=20,failed=0,skipped=0
+SUMMARY:executed=24,passed=24,failed=0,skipped=0
 ```
 
-- **Executed**: 20
-- **Passed**: 20
+- **Executed**: 24
+- **Passed**: 24
 - **Failed**: 0
 - **Skipped**: 0
 
@@ -289,16 +297,87 @@ SUMMARY:executed=20,passed=20,failed=0,skipped=0
 [HeadlessBot] Received respawn packet - player respawned
 [HeadlessBot] Received death screen - sending respawn request
 [HeadlessBot] Received respawn packet - player respawned
+[HeadlessBot] Received death screen - sending respawn request
+[HeadlessBot] Received respawn packet - player respawned
 ```
+
+### keepInventory Validation Scenarios
+
+**keepInventory=false** (deaths 1 and 2, default gamerule):
+
+- PRE_DEATH snapshot contains the items (stone, bread, enchanted sword, armor, offhand shield)
+- Player respawns without those items (items dropped on death)
+- Incident metadata records `keepInventory=false`
+- Verified by `keepInventory_false_incident_metadata` check
+
+**keepInventory=true** (death 3, gamerule set via typed API):
+
+- `world.setGameRule(GameRules.KEEP_INVENTORY, true)` applied before death
+- PRE_DEATH snapshot contains the items (diamond, iron ingot)
+- Player retains diamond and iron ingot after respawn
+- Incident metadata records `keepInventory=true`
+- Verified by `keepInventory_true_death`, `keepInventory_true_items_retained`,
+  and `keepInventory_true_incident_metadata` checks
+
+### Typed GameRule API
+
+The `DeathCaptureService` uses the typed Paper 26.2 API instead of the
+deprecated string-based lookup:
+
+```java
+Boolean keepInventory = world.getGameRuleValue(GameRules.KEEP_INVENTORY);
+```
+
+- **Typed constant**: `org.bukkit.GameRules.KEEP_INVENTORY` (`GameRule<Boolean>`)
+- **Typed lookup**: `World.getGameRuleValue(GameRule<T>)` returns `@NotNull T`
+- **Failure behavior**: If the typed lookup unexpectedly returns `null`, the
+  metadata records `keepInventory=unknown` and a warning is logged. The value
+  is never silently fabricated as `false`.
+
+### MCProtocolLib Dependency Coordinate
+
+The headless client dependency is scoped exclusively to the `runtimeValidation`
+source set and is absent from the production JAR:
+
+```
+org.geysermc.mcprotocollib:protocol:26.2-20260709.110151-15
+```
+
+- **Repository**: `https://repo.opencollab.dev/maven-snapshots/`
+- **Configuration**: `runtimeValidationImplementation` only
+- **Pinned version**: `26.2-20260709.110151-15` (exact snapshot, no changing selector)
+- **Protocol version**: 776 (Minecraft 26.2)
+
+### Production JAR Inspection
+
+The production shadow JAR (`echoclaims-0.1.0-SNAPSHOT.jar`, 296 entries) was
+inspected to confirm no validation dependencies leaked into it:
+
+```
+MCProtocolLib classes (org.geysermc): 0
+Netty classes (io.netty): 0
+RuntimeValidationPlugin classes: 0
+HeadlessBotClient classes: 0
+validation plugin.yml: 0
+Total entries: 296
+```
+
+The MCProtocolLib dependency, Netty transport, validation plugin, and headless
+bot client are all confined to the `runtimeValidation` source set and do not
+appear in the production JAR, normal runtime dependencies, or plugin
+distribution artifacts.
 
 ### Bug Fix During Validation
 
 The runtime validation discovered a bug in `DeathCaptureService.buildIncident()`:
 
-- `world.getGameRuleValue("keepInventory")` threw
+- `world.getGameRuleValue("keepInventory")` (string-based, deprecated) threw
   `IllegalArgumentException: Unknown gamerule: keepInventory` on Paper 26.2.
-- **Fix**: Wrapped the call in a try-catch that defaults to `false` when the
-  gamerule is not found (`@/src/main/java/io/github/skyblueheat/echoclaims/paper/listener/DeathCaptureService.java:254-262`).
+- **Fix**: Replaced with the typed API `world.getGameRuleValue(GameRules.KEEP_INVENTORY)`
+  which returns `@NotNull Boolean`. If the lookup unexpectedly returns `null`,
+  the metadata records `keepInventory=unknown` with a logged warning — never
+  silently fabricating `false`.
+  (`@/src/main/java/io/github/skyblueheat/echoclaims/paper/listener/DeathCaptureService.java:256-270`)
 
 ## Known Limitations
 

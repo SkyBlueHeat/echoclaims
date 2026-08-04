@@ -2,8 +2,10 @@ package io.github.skyblueheat.echoclaims.testplugin;
 
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
+import org.bukkit.GameRules;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -114,6 +116,10 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
                 check("command_incident", this::runCommandIncident);
                 check("command_snapshot", this::runCommandSnapshot);
                 check("command_ec_alias", this::runCommandEcAlias);
+                check("keepInventory_false_incident_metadata", this::verifyKeepInventoryFalseMetadata);
+                check("keepInventory_true_death", this::triggerKeepInventoryTrueDeath);
+                check("keepInventory_true_items_retained", this::verifyKeepInventoryTrueItemsRetained);
+                check("keepInventory_true_incident_metadata", this::verifyKeepInventoryTrueMetadata);
                 check("restart_persistence", this::verifyRestartPersistence);
                 check("migration_idempotency", this::verifyMigrationIdempotency);
                 check("no_exceptions", this::checkNoExceptions);
@@ -384,6 +390,83 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
         runOnMain(() -> getServer().dispatchCommand(getServer().getConsoleSender(), "ec status"));
     }
 
+    private void verifyKeepInventoryFalseMetadata() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT metadata FROM incidents WHERE player_uuid = '" + testPlayerUuid + "' ORDER BY occurred_at ASC LIMIT 2");
+            while (rs.next()) {
+                String metadata = rs.getString("metadata");
+                require(metadata != null, "Incident metadata is null");
+                require(metadata.contains("keepInventory=false"),
+                        "keepInventory=false not recorded in incident metadata: " + metadata);
+            }
+            rs.close();
+        }
+    }
+
+    private void triggerKeepInventoryTrueDeath() throws Exception {
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found");
+            World world = player.getWorld();
+            world.setGameRule(GameRules.KEEP_INVENTORY, true);
+            PlayerInventory inv = player.getInventory();
+            inv.clear();
+            inv.setItem(0, ItemStack.of(Material.DIAMOND, 1));
+            inv.setItem(1, ItemStack.of(Material.IRON_INGOT, 4));
+            player.updateInventory();
+            getLogger().info("Validation: set keepInventory=true and gave items for third death");
+        });
+        deathLatch = new CountDownLatch(1);
+        respawnLatch = new CountDownLatch(1);
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found");
+            player.setGameMode(GameMode.SURVIVAL);
+            player.setHealth(0.0);
+        });
+        require(deathLatch.await(30, TimeUnit.SECONDS), "Third death event not received");
+        require(respawnLatch.await(30, TimeUnit.SECONDS), "Third respawn not received");
+        Thread.sleep(3000);
+    }
+
+    private void verifyKeepInventoryTrueItemsRetained() throws Exception {
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found");
+            PlayerInventory inv = player.getInventory();
+            boolean hasDiamond = false;
+            boolean hasIron = false;
+            for (int i = 0; i < 36; i++) {
+                ItemStack item = inv.getItem(i);
+                if (item != null && !item.getType().isAir()) {
+                    if (item.getType() == Material.DIAMOND) hasDiamond = true;
+                    if (item.getType() == Material.IRON_INGOT) hasIron = true;
+                }
+            }
+            require(hasDiamond, "Player did not retain diamond after respawn with keepInventory=true");
+            require(hasIron, "Player did not retain iron ingot after respawn with keepInventory=true");
+            getLogger().info("Validation: verified items retained with keepInventory=true");
+        });
+    }
+
+    private void verifyKeepInventoryTrueMetadata() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT metadata FROM incidents WHERE player_uuid = '" + testPlayerUuid + "' ORDER BY occurred_at DESC LIMIT 1");
+            require(rs.next(), "No third incident found");
+            String metadata = rs.getString("metadata");
+            require(metadata != null, "Third incident metadata is null");
+            require(metadata.contains("keepInventory=true"),
+                    "keepInventory=true not recorded in incident metadata: " + metadata);
+            rs.close();
+        }
+    }
+
     private void verifyRestartPersistence() throws Exception {
         Path dbPath = getDbPath();
         try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
@@ -391,12 +474,12 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
             ResultSet rs = stmt.executeQuery(
                     "SELECT COUNT(*) FROM incidents WHERE player_uuid = '" + testPlayerUuid + "'");
             rs.next();
-            require(rs.getInt(1) >= 2, "Incidents not persisted, found " + rs.getInt(1));
+            require(rs.getInt(1) >= 3, "Incidents not persisted, found " + rs.getInt(1));
             rs.close();
             ResultSet snapRs = stmt.executeQuery(
                     "SELECT COUNT(*) FROM inventory_snapshots WHERE player_uuid = '" + testPlayerUuid + "'");
             snapRs.next();
-            require(snapRs.getInt(1) >= 2, "Snapshots not persisted, found " + snapRs.getInt(1));
+            require(snapRs.getInt(1) >= 3, "Snapshots not persisted, found " + snapRs.getInt(1));
             snapRs.close();
         }
     }

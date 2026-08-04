@@ -18,6 +18,7 @@ import io.github.skyblueheat.echoclaims.integration.IntegrationRegistry;
 import io.github.skyblueheat.echoclaims.integration.bukkit.BukkitItems;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
+import org.bukkit.GameRules;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
@@ -252,15 +253,20 @@ public final class DeathCaptureService implements Listener {
         }
 
         Map<String, String> metadata = new LinkedHashMap<>();
-        boolean keepInventory = false;
+        String keepInventoryValue;
         if (world != null) {
-            try {
-                keepInventory = Boolean.parseBoolean(world.getGameRuleValue("keepInventory"));
-            } catch (IllegalArgumentException ignored) {
-                // Gamerule may not exist in this world or API changed
+            Boolean keepInventory = world.getGameRuleValue(GameRules.KEEP_INVENTORY);
+            if (keepInventory != null) {
+                keepInventoryValue = keepInventory.toString();
+            } else {
+                keepInventoryValue = "unknown";
+                logger.warning("Typed gamerule lookup for KEEP_INVENTORY returned null in world "
+                        + world.getName() + " — recording keepInventory=unknown");
             }
+        } else {
+            keepInventoryValue = "unknown";
         }
-        metadata.put("keepInventory", String.valueOf(keepInventory));
+        metadata.put("keepInventory", keepInventoryValue);
         metadata.put("lastDamageCause",
                 lastDamage != null ? lastDamage.getCause().name() : "UNKNOWN");
         metadata.put("dropsCount", String.valueOf(event.getDrops().size()));

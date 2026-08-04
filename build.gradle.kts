@@ -80,7 +80,7 @@ dependencies {
     "paperIntegrationTestImplementation"(sourceSets.main.get().output)
 
     "runtimeValidationImplementation"("io.papermc.paper:paper-api:$paperApiVersion")
-    "runtimeValidationImplementation"("org.geysermc.mcprotocollib:protocol:26.2-SNAPSHOT")
+    "runtimeValidationImplementation"("org.geysermc.mcprotocollib:protocol:26.2-20260709.110151-15")
 }
 
 java {
