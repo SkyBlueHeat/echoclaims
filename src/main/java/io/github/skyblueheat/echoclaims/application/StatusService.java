@@ -23,6 +23,8 @@ public final class StatusService {
     private final AuditWriteQueue writeQueue;
     private final IntegrationRegistry integrations;
     private final EvidencePersistenceService evidenceService;
+    private final ClaimMetrics claimMetrics;
+    private final ClaimLookupService claimLookupService;
     private final String pluginVersion;
     private final long startedAt;
 
@@ -32,6 +34,8 @@ public final class StatusService {
             AuditWriteQueue writeQueue,
             IntegrationRegistry integrations,
             EvidencePersistenceService evidenceService,
+            ClaimMetrics claimMetrics,
+            ClaimLookupService claimLookupService,
             String pluginVersion,
             long startedAt
     ) {
@@ -40,6 +44,8 @@ public final class StatusService {
         this.writeQueue = Objects.requireNonNull(writeQueue, "writeQueue");
         this.integrations = Objects.requireNonNull(integrations, "integrations");
         this.evidenceService = evidenceService;
+        this.claimMetrics = claimMetrics;
+        this.claimLookupService = claimLookupService;
         this.pluginVersion = Objects.requireNonNull(pluginVersion, "pluginVersion");
         this.startedAt = startedAt;
     }
@@ -66,6 +72,30 @@ public final class StatusService {
                 : new EvidenceMetrics.EvidenceMetricsSnapshot(0, 0, 0, 0, 0, 0, 0);
         int evidencePending = evidenceService != null ? evidenceService.pendingCount() : 0;
 
+        ClaimMetrics.ClaimMetricsSnapshot claimSnap = claimMetrics != null
+                ? claimMetrics.snapshot()
+                : new ClaimMetrics.ClaimMetricsSnapshot(0, 0, 0, 0, 0, 0, 0);
+
+        long totalClaims = 0;
+        long draftClaims = 0;
+        long submittedClaims = 0;
+        long cancelledClaims = 0;
+        long totalAuditEntries = 0;
+        if (claimLookupService != null) {
+            try {
+                totalClaims = claimLookupService.countAllClaims();
+                draftClaims = claimLookupService.countClaimsByStatus(
+                        io.github.skyblueheat.echoclaims.domain.claim.ClaimStatus.DRAFT);
+                submittedClaims = claimLookupService.countClaimsByStatus(
+                        io.github.skyblueheat.echoclaims.domain.claim.ClaimStatus.SUBMITTED);
+                cancelledClaims = claimLookupService.countClaimsByStatus(
+                        io.github.skyblueheat.echoclaims.domain.claim.ClaimStatus.CANCELLED);
+                totalAuditEntries = claimLookupService.countAuditEntries();
+            } catch (Exception ignored) {
+                // Database may not be ready yet
+            }
+        }
+
         return new StatusReport(
                 pluginVersion,
                 settings.locale(),
@@ -85,7 +115,20 @@ public final class StatusService {
                 evidence.duplicateIncidents(),
                 evidence.failedPersistence(),
                 evidence.rejectedCaptures(),
-                evidencePending
+                evidencePending,
+                settings.claimsEnabled(),
+                totalClaims,
+                draftClaims,
+                submittedClaims,
+                cancelledClaims,
+                totalAuditEntries,
+                claimSnap.claimsCreated(),
+                claimSnap.claimsSubmitted(),
+                claimSnap.claimsCancelled(),
+                claimSnap.claimsRejected(),
+                claimSnap.duplicateOpenClaims(),
+                claimSnap.rateLimited(),
+                claimSnap.concurrencyConflicts()
         );
     }
 
@@ -108,7 +151,20 @@ public final class StatusService {
             long evidenceDuplicates,
             long evidenceFailed,
             long evidenceRejected,
-            int evidencePending
+            int evidencePending,
+            boolean claimsEnabled,
+            long totalClaims,
+            long draftClaims,
+            long submittedClaims,
+            long cancelledClaims,
+            long totalClaimAuditEntries,
+            long claimsCreated,
+            long claimsSubmitted,
+            long claimsCancelled,
+            long claimsRejected,
+            long duplicateOpenClaims,
+            long rateLimitedClaims,
+            long claimConcurrencyConflicts
     ) {
     }
 }

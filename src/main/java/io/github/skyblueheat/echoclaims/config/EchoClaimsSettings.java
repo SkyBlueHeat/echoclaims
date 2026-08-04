@@ -19,7 +19,10 @@ public record EchoClaimsSettings(
         boolean capturePostRespawn,
         int maxRecentResults,
         int maxItemPayloadBytes,
-        int evidenceQueueCapacity
+        int evidenceQueueCapacity,
+        boolean claimsEnabled,
+        Duration claimRateLimitCooldown,
+        int claimMaxDescriptionLength
 ) {
 
     public EchoClaimsSettings {
@@ -38,6 +41,10 @@ public record EchoClaimsSettings(
         maxRecentResults = Math.max(1, Math.min(maxRecentResults, 100));
         maxItemPayloadBytes = Math.max(256, Math.min(maxItemPayloadBytes, 1_048_576));
         evidenceQueueCapacity = Math.max(16, evidenceQueueCapacity);
+        claimRateLimitCooldown = claimRateLimitCooldown == null
+                ? Duration.ofSeconds(30)
+                : claimRateLimitCooldown;
+        claimMaxDescriptionLength = Math.max(0, Math.min(claimMaxDescriptionLength, 1_000));
     }
 
     private static String validateSqliteFile(String value) {
