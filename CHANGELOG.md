@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.1.0-SNAPSHOT] - 2025-08-03
 
+### MVP-01: Evidence Capture Foundation
+
+### Added
+- Immutable domain records for evidence capture:
+  - `InventorySnapshot` — full player inventory state with items, stats, location
+  - `SnapshotItem` — single item in a snapshot slot with serialization and scoring
+  - `Incident` — discrete event linking pre/post snapshots with metadata
+  - `CaptureReason` enum (PRE_DEATH, POST_RESPAWN, MANUAL_ADMIN)
+  - `IncidentType` enum (PLAYER_DEATH)
+  - `IncidentStatus` enum (OPEN, RESOLVED, REJECTED)
+  - `Coordinates` record for block-level positions
+- Item serialization via `BukkitItemSerializer` using Paper byte serialization
+  wrapped in Base64 with a 1-byte format version header
+- Schema migration v2: `inventory_snapshots`, `snapshot_items`, `incidents` tables
+  with foreign keys, indexes, and uniqueness constraints
+- Repository interfaces and SQLite implementations:
+  - `InventorySnapshotRepository` / `SqliteInventorySnapshotRepository`
+  - `IncidentRepository` / `SqliteIncidentRepository`
+- `MapCodec` utility for encoding/decoding maps to delimited strings for SQLite
+- `EvidenceMetrics` thread-safe counters for captures, persistence, duplicates, rejections
+- `DeduplicationKeyFactory` for deterministic semantic dedup keys
+- `EvidencePersistenceService` — bounded single-thread async executor for evidence writes
+- `EvidenceLookupService` — read-only queries for admin commands
+- `DeathCaptureService` — `PlayerDeathEvent` and `PlayerRespawnEvent` listener
+- Admin commands: `/echoclaims incidents <player>`, `/echoclaims incident <uuid>`,
+  `/echoclaims snapshot <uuid>`
+- Evidence configuration: `evidence.capture.player-death`, `evidence.capture.post-respawn`,
+  `evidence.max-recent-results`, `evidence.max-item-payload-bytes`, `evidence.queue-capacity`
+- New permissions: `echoclaims.command.incidents`, `echoclaims.command.incident`,
+  `echoclaims.command.snapshot`
+- Message keys for incident and snapshot display (en, tr)
+- Tests for domain models, MapCodec, migration v2, repositories, deduplication,
+  evidence persistence service, and configuration
+- Updated `StatusService` to report evidence metrics
+
 ### Verified
 - Paper runtime validation completed on Paper 26.2 build 87 with Java 25
   (Eclipse Adoptium Temurin 25.0.4+7 LTS) on Windows 10.

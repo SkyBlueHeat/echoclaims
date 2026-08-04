@@ -26,7 +26,7 @@ import java.util.logging.Level;
  * <p>The bundled English file is always used as the fallback catalog, so a partially
  * translated or damaged locale file still produces readable output.</p>
  */
-public final class PaperMessageService {
+public final class PaperMessageService implements MessageService {
 
     public static final String DEFAULT_LOCALE = "en";
 

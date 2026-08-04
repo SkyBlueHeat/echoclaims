@@ -24,7 +24,11 @@ The domain package must not import Bukkit, Paper, or any external plugin classes
 io.github.skyblueheat.echoclaims
 ├── application/          # Application services
 │   ├── ItemValueScorer   # Pure item scoring
-│   └── StatusService     # Status report aggregation
+│   ├── StatusService     # Status report aggregation
+│   ├── EvidenceMetrics   # Thread-safe evidence capture/persistence counters
+│   ├── DeduplicationKeyFactory  # Deterministic semantic dedup keys
+│   ├── EvidencePersistenceService  # Bounded async evidence writer
+│   └── EvidenceLookupService  # Read-only evidence queries for admin commands
 ├── config/               # Configuration loading and validation
 │   ├── ConfigurationSource
 │   ├── MapConfigurationSource
@@ -34,12 +38,12 @@ io.github.skyblueheat.echoclaims
 │   └── MessageCatalog
 ├── domain/               # Pure domain model (no Bukkit imports)
 │   ├── audit/            # AuditRecord
-│   ├── claim/            # (empty, reserved for MVP)
+│   ├── claim/            # (empty, reserved for future)
 │   ├── content/          # ContentKey, IdentifiedContent, Capability, SemanticRole
-│   ├── incident/         # (empty, reserved for MVP)
+│   ├── incident/         # Incident, IncidentType, IncidentStatus
 │   ├── item/             # ItemDescriptor, ItemScore, ItemScoreWeights
-│   ├── refund/           # (empty, reserved for MVP)
-│   └── snapshot/         # (empty, reserved for MVP)
+│   ├── refund/           # (empty, reserved for future)
+│   └── snapshot/         # InventorySnapshot, SnapshotItem, CaptureReason, Coordinates
 ├── integration/          # Provider-neutral integration layer
 │   ├── ContentProvider
 │   ├── EntityContentProvider
@@ -48,17 +52,22 @@ io.github.skyblueheat.echoclaims
 │   ├── ProviderRegistry
 │   ├── ProviderHealth
 │   ├── ProviderStatus
+│   ├── ItemSerializer    # Interface for item byte serialization
+│   ├── ItemSerializationException
 │   ├── bukkit/           # Bukkit adapters
-│   │   └── BukkitItems
+│   │   ├── BukkitItems
+│   │   └── BukkitItemSerializer  # Paper byte serialization + Base64 + versioning
 │   └── vanilla/          # Vanilla fallback providers
 │       ├── VanillaEntityProvider
 │       └── VanillaItemProvider
 ├── paper/                # Paper plugin layer
 │   ├── EchoClaimsPlugin  # Main plugin class
 │   ├── command/
-│   │   └── EchoClaimsCommand
+│   │   └── EchoClaimsCommand  # status, incidents, incident, snapshot subcommands
 │   ├── config/
 │   │   └── BukkitConfigurationSource
+│   ├── listener/
+│   │   └── DeathCaptureService  # PlayerDeathEvent + PlayerRespawnEvent listener
 │   └── message/
 │       └── PaperMessageService
 └── persistence/          # SQLite persistence
@@ -66,6 +75,11 @@ io.github.skyblueheat.echoclaims
     ├── SqliteAuditRecordRepository
     ├── AuditWriteQueue
     ├── DatabaseManager
+    ├── InventorySnapshotRepository
+    ├── SqliteInventorySnapshotRepository
+    ├── IncidentRepository
+    ├── SqliteIncidentRepository
+    ├── MapCodec           # Map ↔ delimited string codec for SQLite text columns
     └── migration/
         ├── Migration
         └── SchemaMigrator
@@ -98,17 +112,50 @@ a configuration error.
 Schema migrations are versioned, forward-only, and applied in a transaction.
 The `schema_version` table records what was applied and when.
 
-## Database Schema (v1)
+## Database Schema (v2)
 
 - `schema_version` — migration tracking
 - `audit_records` — immutable audit log with category, source, details, and timestamp
+- `inventory_snapshots` — immutable player inventory state at capture time
+- `snapshot_items` — individual items within a snapshot (FK to `inventory_snapshots`)
+- `incidents` — discrete events that may produce lost-item claims, linked to snapshots
 
-## Planned Domain Areas
+### Evidence capture flow
 
-The following packages are intentionally empty and will be populated in the
-first MVP sprint:
+1. `DeathCaptureService` listens for `PlayerDeathEvent` on the server thread.
+2. Bukkit objects (inventory, location, health, etc.) are converted to immutable
+   domain records (`InventorySnapshot`, `Incident`) on the main thread.
+3. Items are serialized via `BukkitItemSerializer` using Paper's byte serialization
+   wrapped in Base64 with a version header.
+4. `EvidencePersistenceService` accepts the snapshot+incident pair on a bounded
+   single-thread executor. If the queue is full, the capture is rejected and counted.
+5. The persistence worker inserts the snapshot and its items atomically in a
+   transaction, then inserts the incident. Deduplication keys prevent duplicate
+   incidents from being stored.
+6. On `PlayerRespawnEvent`, a post-respawn snapshot is captured and linked to the
+   incident via `updatePostEventSnapshot`.
 
-- `domain/incident` — discrete events that may produce claims
-- `domain/snapshot` — player inventory state snapshots
+### Deduplication
+
+`DeduplicationKeyFactory` generates deterministic keys from semantic event data:
+player UUID, time bucket (1-second granularity), world, and coordinates.
+The `incidents` table enforces uniqueness on `deduplication_key`, so duplicate
+submissions are rejected by the database and counted as duplicates in metrics.
+
+### Item serialization
+
+`BukkitItemSerializer` wraps Paper's `ItemStack.serializeAsBytes` in Base64 with
+a 1-byte format version header. The maximum payload size is configurable
+(default 65536 bytes). Items exceeding the limit are skipped with a warning.
+
+## Populated Domain Areas
+
+The following packages are now populated:
+
+- `domain/incident` — `Incident`, `IncidentType`, `IncidentStatus`
+- `domain/snapshot` — `InventorySnapshot`, `SnapshotItem`, `CaptureReason`, `Coordinates`
+
+The following remain reserved for future sprints:
+
 - `domain/claim` — player claim requests
 - `domain/refund` — item restoration records

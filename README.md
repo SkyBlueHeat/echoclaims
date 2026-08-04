@@ -6,10 +6,10 @@ EchoClaims is an early-stage commercial Paper plugin foundation. It captures,
 stores, and retrieves server-side evidence so administrators can resolve
 lost-item disputes without relying on player-submitted screenshots.
 
-> **Status:** This repository contains the bootstrap foundation only.
-> The complete lost-item claim workflow is not yet implemented.
-> See [docs/BOOTSTRAP_FROM_WORLDECHO.md](docs/BOOTSTRAP_FROM_WORLDECHO.md)
-> for the current state and planned MVP scope.
+> **Status:** Evidence capture foundation (MVP-01) implemented.
+> Player death evidence is captured, persisted, and queryable via admin commands.
+> Claim processing, staff approval, and refund workflows are not yet implemented.
+> See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the current state.
 
 ## Requirements
 
@@ -50,7 +50,10 @@ The shaded JAR is produced at `build/libs/echoclaims-0.1.0-SNAPSHOT.jar`.
 
 | Command | Alias | Permission | Description |
 |---------|-------|------------|-------------|
-| `/echoclaims status` | `/ec status` | `echoclaims.command.status` | Reports plugin version, database availability, write queue state, provider list, and uptime. |
+| `/echoclaims status` | `/ec status` | `echoclaims.command.status` | Reports plugin version, database, queue, evidence metrics, providers, and uptime. |
+| `/echoclaims incidents <player>` | `/ec incidents <player>` | `echoclaims.command.incidents` | Lists recent incidents for a player. |
+| `/echoclaims incident <uuid>` | `/ec incident <uuid>` | `echoclaims.command.incident` | Shows details of a single incident by UUID. |
+| `/echoclaims snapshot <uuid>` | `/ec snapshot <uuid>` | `echoclaims.command.snapshot` | Shows details of an inventory snapshot by UUID. |
 
 ## Permissions
 
@@ -58,6 +61,9 @@ The shaded JAR is produced at `build/libs/echoclaims-0.1.0-SNAPSHOT.jar`.
 |------------|---------|-------------|
 | `echoclaims.admin` | op | Full administration access. |
 | `echoclaims.command.status` | op | Access to `/echoclaims status`. |
+| `echoclaims.command.incidents` | op | Access to `/echoclaims incidents`. |
+| `echoclaims.command.incident` | op | Access to `/echoclaims incident`. |
+| `echoclaims.command.snapshot` | op | Access to `/echoclaims snapshot`. |
 
 ## Configuration
 

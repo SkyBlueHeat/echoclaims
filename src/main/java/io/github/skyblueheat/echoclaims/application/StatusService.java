@@ -22,6 +22,7 @@ public final class StatusService {
     private final DatabaseManager databaseManager;
     private final AuditWriteQueue writeQueue;
     private final IntegrationRegistry integrations;
+    private final EvidencePersistenceService evidenceService;
     private final String pluginVersion;
     private final long startedAt;
 
@@ -30,6 +31,7 @@ public final class StatusService {
             DatabaseManager databaseManager,
             AuditWriteQueue writeQueue,
             IntegrationRegistry integrations,
+            EvidencePersistenceService evidenceService,
             String pluginVersion,
             long startedAt
     ) {
@@ -37,6 +39,7 @@ public final class StatusService {
         this.databaseManager = Objects.requireNonNull(databaseManager, "databaseManager");
         this.writeQueue = Objects.requireNonNull(writeQueue, "writeQueue");
         this.integrations = Objects.requireNonNull(integrations, "integrations");
+        this.evidenceService = evidenceService;
         this.pluginVersion = Objects.requireNonNull(pluginVersion, "pluginVersion");
         this.startedAt = startedAt;
     }
@@ -58,6 +61,11 @@ public final class StatusService {
 
         long uptimeMillis = System.currentTimeMillis() - startedAt;
 
+        EvidenceMetrics.EvidenceMetricsSnapshot evidence = evidenceService != null
+                ? evidenceService.metricsSnapshot()
+                : new EvidenceMetrics.EvidenceMetricsSnapshot(0, 0, 0, 0, 0, 0, 0);
+        int evidencePending = evidenceService != null ? evidenceService.pendingCount() : 0;
+
         return new StatusReport(
                 pluginVersion,
                 settings.locale(),
@@ -70,7 +78,14 @@ public final class StatusService {
                 queue.overflowDropped(),
                 queue.abandoned(),
                 integrations.describeProviders(),
-                uptimeMillis
+                uptimeMillis,
+                evidence.acceptedCaptures(),
+                evidence.persistedSnapshots(),
+                evidence.persistedIncidents(),
+                evidence.duplicateIncidents(),
+                evidence.failedPersistence(),
+                evidence.rejectedCaptures(),
+                evidencePending
         );
     }
 
@@ -86,7 +101,14 @@ public final class StatusService {
             long overflowDroppedCount,
             long abandonedCount,
             List<String> providers,
-            long uptimeMillis
+            long uptimeMillis,
+            long evidenceAccepted,
+            long evidenceSnapshots,
+            long evidenceIncidents,
+            long evidenceDuplicates,
+            long evidenceFailed,
+            long evidenceRejected,
+            int evidencePending
     ) {
     }
 }

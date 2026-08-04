@@ -42,6 +42,7 @@ class StatusServiceTest {
                 dbManager,
                 queue,
                 integrations,
+                null,
                 "0.1.0-SNAPSHOT",
                 System.currentTimeMillis() - 5000
         );
@@ -51,7 +52,7 @@ class StatusServiceTest {
         assertEquals("0.1.0-SNAPSHOT", report.version());
         assertEquals("en", report.locale());
         assertTrue(report.databaseAvailable());
-        assertEquals(1, report.schemaVersion());
+        assertEquals(2, report.schemaVersion());
         assertEquals(0, report.pendingWrites());
         assertEquals(0, report.writtenCount());
         assertEquals(0, report.failedCount());
@@ -79,6 +80,7 @@ class StatusServiceTest {
                 dbManager,
                 queue,
                 integrations,
+                null,
                 "0.1.0-SNAPSHOT",
                 System.currentTimeMillis()
         );

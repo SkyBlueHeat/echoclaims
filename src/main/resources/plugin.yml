@@ -8,7 +8,7 @@ load: POSTWORLD
 commands:
   echoclaims:
     description: EchoClaims administration command
-    usage: /echoclaims <status>
+    usage: /echoclaims <status|incidents|incident|snapshot>
     aliases: [ec]
     permission: echoclaims.command.status
 permissions:
@@ -17,4 +17,13 @@ permissions:
     default: op
   echoclaims.command.status:
     description: Allows checking EchoClaims status
+    default: op
+  echoclaims.command.incidents:
+    description: Allows listing recent incidents for a player
+    default: op
+  echoclaims.command.incident:
+    description: Allows looking up a single incident by UUID
+    default: op
+  echoclaims.command.snapshot:
+    description: Allows looking up an inventory snapshot by UUID
     default: op

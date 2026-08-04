@@ -14,7 +14,12 @@ public record EchoClaimsSettings(
         Duration shutdownTimeout,
         int writeQueueCapacity,
         int writeBatchSize,
-        boolean debugLogging
+        boolean debugLogging,
+        boolean capturePlayerDeath,
+        boolean capturePostRespawn,
+        int maxRecentResults,
+        int maxItemPayloadBytes,
+        int evidenceQueueCapacity
 ) {
 
     public EchoClaimsSettings {
@@ -30,6 +35,9 @@ public record EchoClaimsSettings(
                 : shutdownTimeout;
         writeQueueCapacity = Math.max(16, writeQueueCapacity);
         writeBatchSize = Math.max(1, writeBatchSize);
+        maxRecentResults = Math.max(1, Math.min(maxRecentResults, 100));
+        maxItemPayloadBytes = Math.max(256, Math.min(maxItemPayloadBytes, 1_048_576));
+        evidenceQueueCapacity = Math.max(16, evidenceQueueCapacity);
     }
 
     private static String validateSqliteFile(String value) {
