@@ -1,0 +1,6 @@
+name: RuntimeValidationPlugin
+version: '0.1.0'
+main: io.github.skyblueheat.echoclaims.testplugin.RuntimeValidationPlugin
+api-version: '26.2'
+load: POSTWORLD
+author: [SkyBlueHeat]

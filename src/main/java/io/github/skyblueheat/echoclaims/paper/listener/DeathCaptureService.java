@@ -252,8 +252,14 @@ public final class DeathCaptureService implements Listener {
         }
 
         Map<String, String> metadata = new LinkedHashMap<>();
-        boolean keepInventory = world != null
-                && Boolean.parseBoolean(world.getGameRuleValue("keepInventory"));
+        boolean keepInventory = false;
+        if (world != null) {
+            try {
+                keepInventory = Boolean.parseBoolean(world.getGameRuleValue("keepInventory"));
+            } catch (IllegalArgumentException ignored) {
+                // Gamerule may not exist in this world or API changed
+            }
+        }
         metadata.put("keepInventory", String.valueOf(keepInventory));
         metadata.put("lastDamageCause",
                 lastDamage != null ? lastDamage.getCause().name() : "UNKNOWN");

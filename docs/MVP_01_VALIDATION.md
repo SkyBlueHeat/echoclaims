@@ -181,6 +181,125 @@ Paper environment.
 - Test with a player lacking `echoclaims.command.incidents` — should get "no permission"
 - Test with admin/console — should work
 
+## Fully Automated Runtime Validation
+
+### Command
+
+```bash
+./gradlew runtimeValidation --rerun-tasks --no-configuration-cache
+```
+
+### How It Works
+
+1. The `runtimeValidation` Gradle task builds the EchoClaims shadow JAR and
+   a `RuntimeValidationPlugin` JAR from the `src/runtimeValidation` source set.
+2. A disposable Paper 26.2 build 92 server is started at `build/runtimeServer/`
+   with `online-mode=false`, flat world, and `max-tick-time=-1`.
+3. Both `EchoClaims.jar` and `RuntimeValidationPlugin.jar` are placed in
+   `plugins/`.
+4. The Gradle task waits for the server to print "Done" (up to 120 seconds).
+5. A **headless Minecraft client** (`HeadlessBotClient`) is launched as a
+   separate Java process using **MCProtocolLib 26.2-SNAPSHOT** (protocol
+   version 776, Minecraft 26.2).
+6. The bot connects to `127.0.0.1:25565` in offline mode as `TestBot`
+   (no Minecraft account required).
+7. The `RuntimeValidationPlugin` detects the player join and runs the full
+   validation scenario on a dedicated async thread, scheduling Bukkit API
+   calls back on the main thread via `BukkitRunnable`.
+8. The bot automatically sends respawn requests when it receives death
+   screens (`ClientboundPlayerCombatKillPacket` →
+   `ServerboundClientCommandPacket(PERFORM_RESPAWN)`).
+9. After all checks complete, the validation plugin writes results to
+   `validation-results.txt` and shuts down the server.
+10. The Gradle task reads the results, prints them, and fails if any check
+    failed.
+
+### Headless Client Details
+
+- **Library**: MCProtocolLib (`org.geysermc.mcprotocollib:protocol:26.2-SNAPSHOT`)
+- **Protocol version**: 776 (Minecraft 26.2)
+- **Repository**: OpenCollab Snapshots (`https://repo.opencollab.dev/maven-snapshots/`)
+- **Authentication**: Offline mode (no Microsoft account, no credentials)
+- **Bot username**: `TestBot`
+- **Death handling**: Automatically sends `PERFORM_RESPAWN` on death screen
+
+### Validation Checks (20 total)
+
+| # | Check | Description |
+|---|---|---|
+| 1 | `EchoClaims_loaded` | EchoClaims plugin loaded and enabled |
+| 2 | `EchoClaims_ready` | Database initialized with `incidents` and `inventory_snapshots` tables |
+| 3 | `schema_migration_v1_v2` | `schema_version` table contains migrations 1 and 2 |
+| 4 | `no_WorldEcho_branding` | No "WorldEcho" string in plugin name or config |
+| 5 | `player_given_items` | Player given stone, bread, enchanted sword, armor, offhand shield |
+| 6 | `first_death_triggered` | Player death and respawn events fired |
+| 7 | `first_incident_created` | Incident row in DB with `incident_type=PLAYER_DEATH`, `status=OPEN` |
+| 8 | `first_snapshot_contents` | Pre-death snapshot has inventory, armor, offhand, and enchanted items |
+| 9 | `second_death_triggered` | Second death at different location with different inventory |
+| 10 | `second_incident_created` | Two distinct incidents in DB (no dedup for different deaths) |
+| 11 | `command_status` | `/echoclaims status` executes without error |
+| 12 | `command_incidents` | `/echoclaims incidents <uuid>` executes without error |
+| 13 | `command_incident` | `/echoclaims incident <uuid>` executes without error |
+| 14 | `command_snapshot` | `/echoclaims snapshot <uuid>` executes without error |
+| 15 | `command_ec_alias` | `/ec status` alias executes without error |
+| 16 | `restart_persistence` | Incidents and snapshots persisted in DB (>= 2 each) |
+| 17 | `migration_idempotency` | `schema_version` still has exactly 2 migrations (no duplicates) |
+| 18 | `no_exceptions` | No EchoClaims exceptions in server log |
+| 19 | `shutdown_drain` | EchoClaims plugin still enabled at shutdown check |
+| 20 | `no_remaining_threads` | No leftover EchoClaims threads |
+
+### Results
+
+```
+PASS:EchoClaims_loaded
+PASS:EchoClaims_ready
+PASS:schema_migration_v1_v2
+PASS:no_WorldEcho_branding
+PASS:player_given_items
+PASS:first_death_triggered
+PASS:first_incident_created
+PASS:first_snapshot_contents
+PASS:second_death_triggered
+PASS:second_incident_created
+PASS:command_status
+PASS:command_incidents
+PASS:command_incident
+PASS:command_snapshot
+PASS:command_ec_alias
+PASS:restart_persistence
+PASS:migration_idempotency
+PASS:no_exceptions
+PASS:shutdown_drain
+PASS:no_remaining_threads
+SUMMARY:executed=20,passed=20,failed=0,skipped=0
+```
+
+- **Executed**: 20
+- **Passed**: 20
+- **Failed**: 0
+- **Skipped**: 0
+
+### Bot Protocol Evidence
+
+```
+[HeadlessBot] Connecting to 127.0.0.1:25565 as TestBot
+[HeadlessBot] Protocol: 776 (26.2)
+[HeadlessBot] Received login packet - player joined the game
+[HeadlessBot] Received death screen - sending respawn request
+[HeadlessBot] Received respawn packet - player respawned
+[HeadlessBot] Received death screen - sending respawn request
+[HeadlessBot] Received respawn packet - player respawned
+```
+
+### Bug Fix During Validation
+
+The runtime validation discovered a bug in `DeathCaptureService.buildIncident()`:
+
+- `world.getGameRuleValue("keepInventory")` threw
+  `IllegalArgumentException: Unknown gamerule: keepInventory` on Paper 26.2.
+- **Fix**: Wrapped the call in a try-catch that defaults to `false` when the
+  gamerule is not found (`@/src/main/java/io/github/skyblueheat/echoclaims/paper/listener/DeathCaptureService.java:254-262`).
+
 ## Known Limitations
 
 - No claim resolution, approval, or refund features (MVP-02+)
