@@ -310,6 +310,10 @@ val runtimeValidation = tasks.register("runtimeValidation") {
         val echoClaimsJar = echoClaimsJarFile.get().asFile
         val validationJar = validationJarFile.get().asFile
 
+        // Clean server directory for fresh state (preserve cached Paper jar)
+        val pluginsDir = File(serverDir, "plugins")
+        val dbFile = File(serverDir, "plugins/EchoClaims/echoclaims.db")
+        if (pluginsDir.exists()) pluginsDir.deleteRecursively()
         serverDir.mkdirs()
 
         // Download Paper server jar if not cached
@@ -338,7 +342,7 @@ val runtimeValidation = tasks.register("runtimeValidation") {
         )
 
         // Copy EchoClaims JAR and validation plugin JAR to plugins/
-        val pluginsDir = File(serverDir, "plugins").apply { mkdirs() }
+        pluginsDir.mkdirs()
         echoClaimsJar.copyTo(File(pluginsDir, "EchoClaims.jar"), overwrite = true)
         validationJar.copyTo(File(pluginsDir, "RuntimeValidationPlugin.jar"), overwrite = true)
 

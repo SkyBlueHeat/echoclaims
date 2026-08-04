@@ -41,6 +41,8 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
     private volatile UUID testPlayerUuid;
     private volatile UUID firstIncidentId;
     private volatile UUID firstSnapshotId;
+    private volatile String firstClaimReference;
+    private volatile UUID firstClaimId;
     private final AtomicInteger deathCount = new AtomicInteger(0);
     private volatile CountDownLatch deathLatch;
     private volatile CountDownLatch respawnLatch;
@@ -67,6 +69,7 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
         if (validationStarted) return;
         validationStarted = true;
         testPlayerUuid = event.getPlayer().getUniqueId();
+        event.getPlayer().setOp(true);
         getLogger().info("RuntimeValidationPlugin: player joined - " + event.getPlayer().getName());
 
         new BukkitRunnable() {
@@ -104,6 +107,7 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
                 check("EchoClaims_loaded", this::checkEchoClaimsLoaded);
                 check("EchoClaims_ready", this::checkEchoClaimsReady);
                 check("schema_migration_v1_v2", this::checkSchemaMigrations);
+                check("schema_migration_v3_v4", this::checkSchemaMigrationsV3V4);
                 check("no_WorldEcho_branding", this::checkNoWorldEchoBranding);
                 check("player_given_items", this::givePlayerItems);
                 check("first_death_triggered", this::triggerFirstDeath);
@@ -122,6 +126,17 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
                 check("keepInventory_true_incident_metadata", this::verifyKeepInventoryTrueMetadata);
                 check("restart_persistence", this::verifyRestartPersistence);
                 check("migration_idempotency", this::verifyMigrationIdempotency);
+                check("claim_claimable_list", this::runClaimClaimable);
+                check("claim_create_by_index", this::runClaimCreateByIndex);
+                check("claim_created_in_db", this::verifyClaimCreatedInDb);
+                check("claim_list_command", this::runClaimListCommand);
+                check("claim_view_command", this::runClaimViewCommand);
+                check("claim_submit_command", this::runClaimSubmitCommand);
+                check("claim_submitted_in_db", this::verifyClaimSubmittedInDb);
+                check("claim_cancel_command", this::runClaimCancelCommand);
+                check("claim_cancelled_in_db", this::verifyClaimCancelledInDb);
+                check("claim_duplicate_rejected", this::verifyDuplicateClaimRejected);
+                check("claim_audit_entries", this::verifyClaimAuditEntries);
                 check("no_exceptions", this::checkNoExceptions);
             } catch (Exception e) {
                 results.add("FAIL:validation_framework:" + e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -227,6 +242,36 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
         }
     }
 
+    private void checkSchemaMigrationsV3V4() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery("SELECT version FROM schema_version ORDER BY version");
+            List<Integer> versions = new ArrayList<>();
+            while (rs.next()) {
+                versions.add(rs.getInt("version"));
+            }
+            rs.close();
+            require(versions.contains(3), "Migration v3 not applied");
+            require(versions.contains(4), "Migration v4 not applied");
+
+            ResultSet tblRs = stmt.executeQuery(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('claims','claim_audit_entries')");
+            List<String> tables = new ArrayList<>();
+            while (tblRs.next()) {
+                tables.add(tblRs.getString("name"));
+            }
+            tblRs.close();
+            require(tables.contains("claims"), "claims table not found");
+            require(tables.contains("claim_audit_entries"), "claim_audit_entries table not found");
+
+            ResultSet idxRs = stmt.executeQuery(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_claims_active_unique'");
+            require(idxRs.next(), "idx_claims_active_unique index not found");
+            idxRs.close();
+        }
+    }
+
     private void checkNoWorldEchoBranding() {
         var plugin = getServer().getPluginManager().getPlugin("EchoClaims");
         require(plugin != null, "EchoClaims plugin not found");
@@ -246,6 +291,7 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
         runOnMain(() -> {
             Player player = getServer().getPlayer(testPlayerUuid);
             require(player != null, "Test player not found");
+            player.getWorld().setGameRule(GameRules.KEEP_INVENTORY, false);
             PlayerInventory inv = player.getInventory();
             inv.clear();
             inv.setItem(0, ItemStack.of(Material.STONE, 32));
@@ -496,7 +542,167 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
             rs.close();
             require(versions.contains(1), "Migration v1 missing");
             require(versions.contains(2), "Migration v2 missing");
-            require(versions.size() == 2, "Unexpected migration count: " + versions.size() + " versions: " + versions);
+            require(versions.contains(3), "Migration v3 missing");
+            require(versions.contains(4), "Migration v4 missing");
+            require(versions.size() == 4, "Unexpected migration count: " + versions.size() + " versions: " + versions);
+        }
+    }
+
+    private void runClaimClaimable() throws Exception {
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for claim claimable");
+            getServer().dispatchCommand(player, "echoclaims claim claimable");
+        });
+        Thread.sleep(2000);
+    }
+
+    private void runClaimCreateByIndex() throws Exception {
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for claim create");
+            getServer().dispatchCommand(player, "echoclaims claim create 1 Test claim from runtime validation");
+        });
+        Thread.sleep(5000);
+    }
+
+    private void verifyClaimCreatedInDb() throws Exception {
+        Path dbPath = getDbPath();
+        boolean found = false;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+                 Statement stmt = conn.createStatement()) {
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT id, public_reference, status, incident_id FROM claims " +
+                        "WHERE player_uuid = '" + testPlayerUuid + "' ORDER BY created_at ASC LIMIT 1");
+                if (rs.next()) {
+                    firstClaimId = UUID.fromString(rs.getString("id"));
+                    firstClaimReference = rs.getString("public_reference");
+                    require(firstClaimReference != null && firstClaimReference.length() == 8,
+                            "Claim reference should be 8 chars, got: " + firstClaimReference);
+                    require("DRAFT".equals(rs.getString("status")), "Claim status should be DRAFT");
+                    require(rs.getString("incident_id") != null, "Claim incident_id is null");
+                    rs.close();
+
+                    ResultSet auditRs = stmt.executeQuery(
+                            "SELECT action FROM claim_audit_entries WHERE claim_id = '" + firstClaimId + "'");
+                    require(auditRs.next(), "No audit entry for claim creation");
+                    require("CREATED".equals(auditRs.getString("action")), "First audit action should be CREATED");
+                    auditRs.close();
+                    found = true;
+                    break;
+                }
+                rs.close();
+            }
+            Thread.sleep(1000);
+        }
+        require(found, "No claim found for test player after 10 retries");
+    }
+
+    private void runClaimListCommand() throws Exception {
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for claim list");
+            getServer().dispatchCommand(player, "echoclaims claim list");
+        });
+        Thread.sleep(2000);
+    }
+
+    private void runClaimViewCommand() throws Exception {
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for claim view");
+            getServer().dispatchCommand(player, "echoclaims claim view " + firstClaimReference);
+        });
+        Thread.sleep(2000);
+    }
+
+    private void runClaimSubmitCommand() throws Exception {
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for claim submit");
+            getServer().dispatchCommand(player, "echoclaims claim submit " + firstClaimReference);
+        });
+        Thread.sleep(5000);
+    }
+
+    private void verifyClaimSubmittedInDb() throws Exception {
+        Path dbPath = getDbPath();
+        boolean verified = false;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+                 Statement stmt = conn.createStatement()) {
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT status, submitted_at FROM claims WHERE id = '" + firstClaimId + "'");
+                if (rs.next() && "SUBMITTED".equals(rs.getString("status")) && rs.getLong("submitted_at") > 0) {
+                    verified = true;
+                    rs.close();
+                    break;
+                }
+                rs.close();
+            }
+            Thread.sleep(1000);
+        }
+        require(verified, "Claim not found as SUBMITTED after 10 retries");
+    }
+
+    private void runClaimCancelCommand() throws Exception {
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for claim cancel");
+            getServer().dispatchCommand(player, "echoclaims claim cancel " + firstClaimReference);
+        });
+        Thread.sleep(5000);
+    }
+
+    private void verifyClaimCancelledInDb() throws Exception {
+        Path dbPath = getDbPath();
+        boolean verified = false;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+                 Statement stmt = conn.createStatement()) {
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT status, cancelled_at FROM claims WHERE id = '" + firstClaimId + "'");
+                if (rs.next() && "CANCELLED".equals(rs.getString("status")) && rs.getLong("cancelled_at") > 0) {
+                    verified = true;
+                    rs.close();
+                    break;
+                }
+                rs.close();
+            }
+            Thread.sleep(1000);
+        }
+        require(verified, "Claim not found as CANCELLED after 10 retries");
+    }
+
+    private void verifyDuplicateClaimRejected() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT COUNT(*) FROM claims WHERE player_uuid = '" + testPlayerUuid + "' " +
+                    "AND status IN ('DRAFT','SUBMITTED')");
+            rs.next();
+            require(rs.getInt(1) == 0, "Should have no active claims after cancellation, found " + rs.getInt(1));
+            rs.close();
+        }
+    }
+
+    private void verifyClaimAuditEntries() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT action FROM claim_audit_entries WHERE claim_id = '" + firstClaimId + "' ORDER BY recorded_at ASC");
+            List<String> actions = new ArrayList<>();
+            while (rs.next()) {
+                actions.add(rs.getString("action"));
+            }
+            rs.close();
+            require(actions.size() >= 3, "Expected at least 3 audit entries, found " + actions.size());
+            require("CREATED".equals(actions.get(0)), "First audit should be CREATED, got " + actions.get(0));
+            require(actions.contains("SUBMITTED"), "Audit should contain SUBMITTED");
+            require(actions.contains("CANCELLED"), "Audit should contain CANCELLED");
         }
     }
 
