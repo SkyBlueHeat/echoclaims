@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.1.0-SNAPSHOT] - 2025-08-03
 
+### MVP-02: Claim Foundation
+
+### Added
+- Claim domain model: `Claim`, `ClaimStatus` (DRAFT, SUBMITTED, CANCELLED),
+  `ClaimSource`, `ClaimAuditEntry`, `ClaimActorType`, `ClaimAction`
+- Schema migration v3: `claims` and `claim_audit_entries` tables with foreign
+  keys, indexes, and uniqueness constraints
+- Schema migration v4: partial unique index `idx_claims_active_unique` on
+  `(incident_id, player_uuid) WHERE status IN ('DRAFT', 'SUBMITTED')` for
+  database-level duplicate active claim protection
+- `ClaimStore` interface and `SqliteClaimStore` with atomic transactions for
+  claim creation and transitions
+- `ClaimTransitionPolicy` — pure state machine for allowed transitions
+- `ClaimReferenceGenerator` — 8-character alphanumeric collision-safe references
+- `ClaimMetrics` — thread-safe counters for claim lifecycle events
+- `ClaimEligibilityService` — validates incident ownership, OPEN status, and
+  snapshot existence
+- `ClaimRateLimitService` — in-memory rate limiter with bounded memory and
+  opportunistic cleanup of expired entries
+- `ClaimCreationService` — creates DRAFT claims with eligibility and duplicate
+  checks
+- `ClaimTransitionService` — transitions claim status with optimistic
+  concurrency control
+- `ClaimLookupService` — read-only claim queries for player and staff commands
+- Claim commands: `/ec claim list`, `view`, `create`, `submit`, `cancel`,
+  `claimable`, `staff-view`, `staff-list`
+- Incident selection by index — `/ec claim claimable` lists claimable incidents,
+  `/ec claim create <index>` creates a claim without typing UUIDs
+- Claim configuration: `claims.enabled`, `claims.rate-limit-cooldown-seconds`,
+  `claims.max-description-length`
+- New permissions: `echoclaims.command.claim.list`, `.view`, `.create`,
+  `.cancel`, `.submit`, `.staff.view`, `.staff.list`
+- Message keys for claim commands (en, tr)
+- `StatusService` extended with claim metrics
+- Tests for claim domain, transition policy, eligibility, reference generator,
+  rate limiter (including bounded memory, cleanup, restart, concurrency),
+  claim store (atomicity, duplicate protection, optimistic concurrency),
+  migration v3 and v4, claim creation and transition services
+
 ### MVP-01: Evidence Capture Foundation
 
 ### Added

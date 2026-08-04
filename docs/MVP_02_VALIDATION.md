@@ -1,0 +1,212 @@
+# MVP-02 Validation Report
+
+## Build
+
+- **Command**: `./gradlew clean test shadowJar --rerun-tasks`
+- **Result**: BUILD SUCCESSFUL
+- **Tests**: 311 passed, 0 failed, 14 skipped (Paper-dependent tests)
+- **Total**: 325 test cases
+
+## Behavioral Policy
+
+### Claim Creation Workflow
+
+- `/ec claim create <incident-id-or-index> [description]` creates a claim in
+  **DRAFT** status with a creation audit entry.
+- `/ec claim submit <ref>` transitions a **DRAFT** claim to **SUBMITTED**.
+- Description updates are not supported after creation in MVP-02 (description
+  is set at creation time only).
+- **Verified by**: `ClaimCreationServiceTest`, `ClaimTransitionServiceTest`,
+  `ClaimTransitionPolicyTest`, `ClaimStoreTest`
+
+### Cancellation Policy
+
+- Players can cancel claims in **DRAFT** or **SUBMITTED** status.
+- **CANCELLED** is a terminal state — no transitions out.
+- Cancellation is performed via `/ec claim cancel <ref>`.
+- **Verified by**: `ClaimTransitionPolicyTest`, `ClaimTransitionServiceTest`
+
+### Repeat-Claim Policy
+
+- A cancelled claim permits a new claim for the same incident by the same
+  player.
+- Enforced at:
+  - **Application level**: `ClaimCreationService` checks
+    `findOpenClaimsByIncident` before creating
+  - **Database level**: Partial unique index `idx_claims_active_unique` on
+    `(incident_id, player_uuid) WHERE status IN ('DRAFT', 'SUBMITTED')`
+  - **Tests**: `ClaimStoreTest.databaseRejectsDuplicateActiveClaimForSameIncidentAndPlayer`,
+    `ClaimStoreTest.cancelledClaimAllowsNewActiveClaimForSameIncident`,
+    `MigrationV4Test.partialUniqueIndexPreventsDuplicateActiveClaims`,
+    `MigrationV4Test.cancelledClaimsAllowNewActiveClaimForSameIncident`
+
+### Incident Selection
+
+- Players use `/ec claim claimable` to list their OPEN incidents with no
+  existing active claim, displayed with a 1-based index.
+- Players use `/ec claim create <index> [description]` to create a claim by
+  index — no raw UUID typing required.
+- Raw UUID input is still accepted for backward compatibility.
+- **Verified by**: `EchoClaimsCommandTest` (command routing)
+
+### Active Claim Definition
+
+- **Active statuses**: `DRAFT`, `SUBMITTED`
+- **Terminal status**: `CANCELLED`
+- Only one active claim per (incident, player) pair is allowed.
+- Different players can each have an active claim for the same incident.
+
+## Database and Concurrency Audit
+
+### Atomicity
+
+- `SqliteClaimStore.createClaim`: claim + audit entry in single transaction.
+  Failure rolls back both. **Tested**: `ClaimStoreTest.auditInsertionFailureRollsBackClaimCreation`
+- `SqliteClaimStore.transitionClaim`: status update + audit entry in single
+  transaction. Version mismatch returns false without inserting audit.
+  **Tested**: `ClaimStoreTest.transitionClaimFailsOnVersionMismatch`,
+  `ClaimStoreTest.transitionClaimUpdatesStatusAndVersion`
+
+### Duplicate Active Claim Protection
+
+- Application check via `findOpenClaimsByIncident` before creation.
+- Database partial unique index on `(incident_id, player_uuid) WHERE status
+  IN ('DRAFT', 'SUBMITTED')`.
+- **Tested**: `ClaimStoreTest.databaseRejectsDuplicateActiveClaimForSameIncidentAndPlayer`,
+  `MigrationV4Test.partialUniqueIndexPreventsDuplicateActiveClaims`
+
+### Public Claim Reference Uniqueness
+
+- `UNIQUE` constraint on `public_reference` column.
+- `ClaimReferenceGenerator` generates 8-character alphanumeric references
+  with collision retry.
+- **Tested**: `ClaimStoreTest.findByPublicReferenceWorks`,
+  `ClaimReferenceGeneratorTest`
+
+### Bounded and Ordered List Queries
+
+- `findRecentClaimsByPlayer`: `LIMIT ?` with `Math.max(1, Math.min(limit, 100))`
+  clamping, ordered by `created_at DESC`.
+- `findOpenClaimsByIncident`: ordered by `created_at DESC`, no limit (bounded
+  by unique index — at most one active claim per player per incident).
+- `findAuditEntries`: ordered by `recorded_at ASC`.
+- `ClaimLookupService.maxRecentResults` clamped to [1, 100].
+- **Tested**: `ClaimStoreTest.findRecentClaimsByPlayerReturnsOrderedResults`,
+  `ClaimStoreTest.findOpenClaimsByIncidentReturnsOnlyOpen`
+
+### Foreign Key Enforcement
+
+- `PRAGMA foreign_keys = ON` set in `DatabaseManager`.
+- `claims.incident_id` → `incidents.id` (ON DELETE RESTRICT)
+- `claim_audit_entries.claim_id` → `claims.id` (ON DELETE RESTRICT)
+- **Tested**: `DatabaseManagerTest.foreignKeyEnforcementIsActive`,
+  `MigrationV3Test.claimAuditEntriesHasForeignKeyToClaims`,
+  `ClaimStoreTest.auditInsertionFailureRollsBackClaimCreation`
+
+### Immutability of Incidents and Snapshots
+
+- Incidents and snapshots are never modified by claim operations.
+- Claims only reference incident IDs; no UPDATE statements on incidents or
+  snapshots tables originate from claim services.
+- No `ON DELETE CASCADE` on claim FKs — `ON DELETE RESTRICT` prevents
+  silent evidence deletion.
+
+## Rate Limit Audit
+
+### Bounded Memory
+
+- `ConcurrentHashMap` with opportunistic cleanup of expired entries on each
+  `check()` call.
+- **Tested**: `ClaimRateLimitServiceTest.cleanupExpiredEntriesPreventsUnboundedGrowth`
+
+### Expired Entry Cleanup
+
+- `cleanupExpired(now)` removes entries where `now - entry.value > cooldownMillis`.
+- Called on every `check()` when cooldown is positive.
+- **Tested**: `ClaimRateLimitServiceTest.cleanupExpiredEntriesPreventsUnboundedGrowth`
+
+### Non-Growth with Unique Player UUIDs
+
+- After 100 unique players with 50ms cooldown, sleeping 100ms then checking
+  reduces tracked count below 100.
+- **Tested**: `ClaimRateLimitServiceTest.cleanupExpiredEntriesPreventsUnboundedGrowth`
+
+### Non-Authoritative Role
+
+- Rate limiter is a soft guard, not an authoritative duplicate/active claim
+  barrier. Duplicate protection is enforced by application check + DB unique
+  index.
+- Rate limiter state is in-memory only, lost on restart.
+
+### Restart Behavior
+
+- New `ClaimRateLimitService` instance starts with empty state.
+- **Tested**: `ClaimRateLimitServiceTest.restartResetsRateLimitState`
+
+### Concurrency
+
+- `ConcurrentHashMap` ensures thread-safe access.
+- 10-thread concurrent test verifies no corruption.
+- **Tested**: `ClaimRateLimitServiceTest.concurrentChecksAreSafe`
+
+### No Log Spam
+
+- Rate limiter does not log anything. Rejections are communicated via
+  `RateLimitResult` to the caller.
+
+## Async and Paper Safety Audit
+
+### No Main-Thread SQLite
+
+- All claim DB operations go through `queryExecutor.submit()`.
+- `queryExecutor` is a single-thread daemon `ExecutorService`.
+- **Verified**: Code review of `EchoClaimsCommand` — all DB calls are inside
+  `queryExecutor.submit()` lambdas.
+
+### No Retained Mutable Bukkit Objects
+
+- Commands capture `player.getUniqueId()` (immutable UUID) before async work.
+- `sender` reference is used in `syncScheduler.accept()` callbacks that run
+  on the main thread via `runTask`.
+- No `Player`, `Inventory`, or `Location` objects are passed to async work.
+
+### Command Output on Main Thread
+
+- All `syncScheduler.accept()` calls use `getServer().getScheduler().runTask()`.
+- Messages are sent to the player on the main thread.
+
+### Safe Handling of Disconnected Players
+
+- `MessageService.send` handles sending to potentially offline senders
+  gracefully (Bukkit handles this at the API level).
+
+### Console Staff Commands
+
+- `claimStaffView` and `claimStaffList` do not require `sender instanceof Player`.
+- Permission checks work for console senders.
+
+### Safe Rejection During Shutdown
+
+- `onDisable` sets `enabled = false`, preventing `onStorageReady` from
+  initializing services after shutdown.
+- `queryExecutor.shutdownNow()` cancels pending tasks.
+- `awaitTermination` with 5-second timeout ensures clean shutdown.
+
+### No Silent Loss Due to Executor Saturation
+
+- `queryExecutor` is unbounded (single-thread executor with unbounded queue).
+- If the executor is shut down, `submit` throws `RejectedExecutionException`,
+  which is caught by the command handler's try-catch.
+
+## Scope Exclusions
+
+The following are explicitly **not** implemented in MVP-02:
+
+- Refund or item restoration
+- Staff approval or rejection of submitted claims
+- GUI-based claim management
+- Mailbox or notification systems
+- Discord integration
+- MySQL or external database support
+- Automated claim resolution
+- Description updates after creation
