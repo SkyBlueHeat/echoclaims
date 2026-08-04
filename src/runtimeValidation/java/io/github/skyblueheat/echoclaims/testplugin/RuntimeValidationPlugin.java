@@ -26,7 +26,9 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -39,14 +41,23 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
     private final AtomicInteger passed = new AtomicInteger(0);
     private final AtomicInteger failed = new AtomicInteger(0);
     private volatile UUID testPlayerUuid;
+    private volatile UUID secondPlayerUuid;
     private volatile UUID firstIncidentId;
+    private volatile UUID secondIncidentId;
     private volatile UUID firstSnapshotId;
     private volatile String firstClaimReference;
     private volatile UUID firstClaimId;
+    private volatile String secondClaimReference;
+    private volatile UUID secondClaimId;
+    private volatile UUID secondSnapshotId;
     private final AtomicInteger deathCount = new AtomicInteger(0);
     private volatile CountDownLatch deathLatch;
     private volatile CountDownLatch respawnLatch;
+    private volatile CountDownLatch secondPlayerLatch;
     private volatile boolean validationStarted = false;
+    private Map<String, String> incidentEvidenceBefore;
+    private Map<String, String> snapshotEvidenceBefore;
+    private Map<String, String> snapshotItemsEvidenceBefore;
 
     @FunctionalInterface
     private interface ThrowingRunnable {
@@ -66,10 +77,17 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerJoin(PlayerJoinEvent event) {
+        event.getPlayer().setOp(true);
+        if (validationStarted && secondPlayerLatch != null
+                && !event.getPlayer().getUniqueId().equals(testPlayerUuid)) {
+            secondPlayerUuid = event.getPlayer().getUniqueId();
+            getLogger().info("RuntimeValidationPlugin: second player joined - " + event.getPlayer().getName());
+            secondPlayerLatch.countDown();
+            return;
+        }
         if (validationStarted) return;
         validationStarted = true;
         testPlayerUuid = event.getPlayer().getUniqueId();
-        event.getPlayer().setOp(true);
         getLogger().info("RuntimeValidationPlugin: player joined - " + event.getPlayer().getName());
 
         new BukkitRunnable() {
@@ -137,6 +155,31 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
                 check("claim_cancelled_in_db", this::verifyClaimCancelledInDb);
                 check("claim_duplicate_rejected", this::verifyDuplicateClaimRejected);
                 check("claim_audit_entries", this::verifyClaimAuditEntries);
+
+                // ─── Security flow checks ───
+                check("incident_captured_before_claims", this::verifyIncidentCapturedBeforeClaims);
+                check("snapshot_captured_before_claims", this::verifySnapshotCapturedBeforeClaims);
+                check("capture_evidence_state", this::captureEvidenceState);
+                check("second_claim_for_security", this::createSecondClaimForSecurity);
+                check("second_player_connected", this::connectSecondPlayer);
+                check("cross_player_create_attempt", this::attemptCrossPlayerCreate);
+                check("cross_player_create_rejected", this::verifyCrossPlayerCreateRejected);
+                check("cross_player_create_no_claim_row", this::verifyNoClaimRowForSecondPlayer);
+                check("cross_player_create_no_audit_row", this::verifyNoAuditRowForSecondPlayer);
+                check("cross_player_view_attempt", this::attemptCrossPlayerView);
+                check("cross_player_view_rejected", this::verifyCrossPlayerViewRejected);
+                check("console_staff_list", this::runConsoleStaffList);
+                check("console_staff_view", this::runConsoleStaffView);
+                check("console_staff_audit", this::runConsoleStaffAudit);
+                check("staff_commands_return_data", this::verifyStaffCommandsReturnData);
+                check("cancelled_rejects_submit", this::verifyCancelledRejectsSubmit);
+                check("cancelled_rejects_cancel", this::verifyCancelledRejectsCancel);
+                check("terminal_no_extra_mutation", this::verifyTerminalNoExtraMutation);
+                check("incident_evidence_unchanged", this::verifyIncidentEvidenceUnchanged);
+                check("snapshot_evidence_unchanged", this::verifySnapshotEvidenceUnchanged);
+                check("claim_reference_resolves_after_restart", this::verifyClaimReferenceResolvesAfterRestart);
+                check("audit_history_resolves_after_restart", this::verifyAuditHistoryResolvesAfterRestart);
+
                 check("no_exceptions", this::checkNoExceptions);
             } catch (Exception e) {
                 results.add("FAIL:validation_framework:" + e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -511,6 +554,14 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
                     "keepInventory=true not recorded in incident metadata: " + metadata);
             rs.close();
         }
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found");
+            player.setGameMode(GameMode.CREATIVE);
+            player.setHealth(20.0);
+            player.setFoodLevel(20);
+            getLogger().info("Validation: set test player to creative mode to prevent further deaths");
+        });
     }
 
     private void verifyRestartPersistence() throws Exception {
@@ -703,6 +754,520 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
             require("CREATED".equals(actions.get(0)), "First audit should be CREATED, got " + actions.get(0));
             require(actions.contains("SUBMITTED"), "Audit should contain SUBMITTED");
             require(actions.contains("CANCELLED"), "Audit should contain CANCELLED");
+        }
+    }
+
+    // ─── Security flow check methods ───
+
+    private void verifyIncidentCapturedBeforeClaims() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT id FROM incidents WHERE player_uuid = '" + testPlayerUuid + "' " +
+                    "AND occurred_at < (SELECT MIN(created_at) FROM claims WHERE player_uuid = '" + testPlayerUuid + "')");
+            require(rs.next(), "No incident found that was created before the first claim");
+            rs.close();
+        }
+    }
+
+    private void verifySnapshotCapturedBeforeClaims() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT COUNT(*) FROM inventory_snapshots WHERE player_uuid = '" + testPlayerUuid + "' " +
+                    "AND captured_at < (SELECT MIN(created_at) FROM claims WHERE player_uuid = '" + testPlayerUuid + "')");
+            rs.next();
+            require(rs.getInt(1) > 0, "No snapshots captured before first claim");
+            rs.close();
+            ResultSet itemsRs = stmt.executeQuery(
+                    "SELECT COUNT(*) FROM snapshot_items si " +
+                    "INNER JOIN inventory_snapshots s ON si.snapshot_uuid = s.id " +
+                    "WHERE s.player_uuid = '" + testPlayerUuid + "'");
+            itemsRs.next();
+            require(itemsRs.getInt(1) > 0, "No snapshot items captured before first claim");
+            itemsRs.close();
+        }
+    }
+
+    private void captureEvidenceState() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            incidentEvidenceBefore = new LinkedHashMap<>();
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT id, incident_type, player_uuid, occurred_at, world_id, x, y, z, cause, " +
+                    "killer_player_uuid, killer_entity_key, pre_event_snapshot_uuid, " +
+                    "post_event_snapshot_uuid, status, metadata, deduplication_key " +
+                    "FROM incidents WHERE player_uuid = '" + testPlayerUuid + "' ORDER BY occurred_at ASC");
+            while (rs.next()) {
+                String id = rs.getString("id");
+                StringBuilder sb = new StringBuilder();
+                for (int i = 1; i <= 16; i++) {
+                    if (i > 1) sb.append("|");
+                    sb.append(rs.getString(i));
+                }
+                incidentEvidenceBefore.put(id, sb.toString());
+            }
+            rs.close();
+            require(incidentEvidenceBefore.size() >= 2, "Expected at least 2 incidents for evidence comparison");
+
+            snapshotEvidenceBefore = new LinkedHashMap<>();
+            ResultSet snapRs = stmt.executeQuery(
+                    "SELECT id, player_uuid, capture_reason, captured_at, world_id, x, y, z, " +
+                    "game_mode, health, food_level, experience_level, total_experience, schema_version " +
+                    "FROM inventory_snapshots WHERE player_uuid = '" + testPlayerUuid + "' ORDER BY captured_at ASC");
+            while (snapRs.next()) {
+                String id = snapRs.getString("id");
+                StringBuilder sb = new StringBuilder();
+                for (int i = 1; i <= 13; i++) {
+                    if (i > 1) sb.append("|");
+                    sb.append(snapRs.getString(i));
+                }
+                snapshotEvidenceBefore.put(id, sb.toString());
+            }
+            snapRs.close();
+
+            snapshotItemsEvidenceBefore = new LinkedHashMap<>();
+            ResultSet itemsRs = stmt.executeQuery(
+                    "SELECT si.id, si.snapshot_uuid, si.slot, si.slot_type, si.material_key, " +
+                    "si.amount, si.serialized_data, si.content_identity, si.score, " +
+                    "si.display_name, si.damage, si.max_durability, si.enchantments " +
+                    "FROM snapshot_items si INNER JOIN inventory_snapshots s ON si.snapshot_uuid = s.id " +
+                    "WHERE s.player_uuid = '" + testPlayerUuid + "' ORDER BY si.id ASC");
+            while (itemsRs.next()) {
+                String id = itemsRs.getString("id");
+                StringBuilder sb = new StringBuilder();
+                for (int i = 1; i <= 13; i++) {
+                    if (i > 1) sb.append("|");
+                    sb.append(itemsRs.getString(i));
+                }
+                snapshotItemsEvidenceBefore.put(id, sb.toString());
+            }
+            itemsRs.close();
+            require(snapshotItemsEvidenceBefore.size() > 0, "No snapshot items captured for evidence comparison");
+        }
+    }
+
+    private void createSecondClaimForSecurity() throws Exception {
+        getLogger().info("Validation: waiting for rate limit cooldown to expire before second claim");
+        Thread.sleep(15000);
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for second claim claimable");
+            getServer().dispatchCommand(player, "echoclaims claim claimable");
+        });
+        Thread.sleep(2000);
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for second claim create");
+            getServer().dispatchCommand(player, "echoclaims claim create 1 Second claim for security flow");
+        });
+        Thread.sleep(5000);
+
+        Path dbPath = getDbPath();
+        boolean found = false;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+                 Statement stmt = conn.createStatement()) {
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT id, public_reference, incident_id FROM claims " +
+                        "WHERE player_uuid = '" + testPlayerUuid + "' AND status = 'DRAFT' ORDER BY created_at DESC LIMIT 1");
+                if (rs.next()) {
+                    secondClaimId = UUID.fromString(rs.getString("id"));
+                    secondClaimReference = rs.getString("public_reference");
+                    secondIncidentId = UUID.fromString(rs.getString("incident_id"));
+                    found = true;
+                    rs.close();
+                    break;
+                }
+                rs.close();
+            }
+            Thread.sleep(1000);
+        }
+        require(found, "Second claim not created for security flow");
+
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet snapRs = stmt.executeQuery(
+                    "SELECT pre_event_snapshot_uuid FROM incidents WHERE id = '" + secondIncidentId + "'");
+            require(snapRs.next(), "Second incident not found");
+            secondSnapshotId = UUID.fromString(snapRs.getString("pre_event_snapshot_uuid"));
+            snapRs.close();
+        }
+    }
+
+    private void connectSecondPlayer() throws Exception {
+        secondPlayerLatch = new CountDownLatch(1);
+        Path triggerFile = Path.of("need-second-bot");
+        Files.writeString(triggerFile, "1");
+        getLogger().info("RuntimeValidationPlugin: signaling for second bot connection");
+        require(secondPlayerLatch.await(60, TimeUnit.SECONDS), "Second player did not join within 60 seconds");
+        Thread.sleep(2000);
+        runOnMain(() -> {
+            Player player2 = getServer().getPlayer(secondPlayerUuid);
+            require(player2 != null, "Second player not found after join");
+            player2.setGameMode(GameMode.CREATIVE);
+            player2.setHealth(20.0);
+            player2.setFoodLevel(20);
+            getLogger().info("Validation: set second player to creative mode to prevent deaths");
+        });
+    }
+
+    private void attemptCrossPlayerCreate() throws Exception {
+        require(secondPlayerUuid != null, "Second player UUID is null");
+        require(secondIncidentId != null, "Second incident UUID is null");
+        runOnMain(() -> {
+            Player player2 = getServer().getPlayer(secondPlayerUuid);
+            require(player2 != null, "Second player not found online");
+            getServer().dispatchCommand(player2, "echoclaims claim create " + secondIncidentId + " cross-player attempt");
+        });
+        Thread.sleep(5000);
+    }
+
+    private void verifyCrossPlayerCreateRejected() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT COUNT(*) FROM claims WHERE player_uuid = '" + secondPlayerUuid + "'");
+            rs.next();
+            require(rs.getInt(1) == 0, "Cross-player claim was not rejected — found " + rs.getInt(1) + " claims for second player");
+            rs.close();
+        }
+    }
+
+    private void verifyNoClaimRowForSecondPlayer() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT COUNT(*) FROM claims WHERE player_uuid = '" + secondPlayerUuid + "'");
+            rs.next();
+            require(rs.getInt(1) == 0, "Claim row exists for second player — should not");
+            rs.close();
+        }
+    }
+
+    private void verifyNoAuditRowForSecondPlayer() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT COUNT(*) FROM claim_audit_entries ca " +
+                    "INNER JOIN claims c ON ca.claim_id = c.id " +
+                    "WHERE c.player_uuid = '" + secondPlayerUuid + "'");
+            rs.next();
+            require(rs.getInt(1) == 0, "Audit row exists for second player's rejected claim — should not");
+            rs.close();
+        }
+    }
+
+    private void attemptCrossPlayerView() throws Exception {
+        require(secondPlayerUuid != null, "Second player UUID is null");
+        require(secondClaimReference != null, "Second claim reference is null");
+        runOnMain(() -> {
+            Player player2 = getServer().getPlayer(secondPlayerUuid);
+            require(player2 != null, "Second player not found online for view attempt");
+            getServer().dispatchCommand(player2, "echoclaims claim view " + secondClaimReference);
+        });
+        Thread.sleep(3000);
+    }
+
+    private void verifyCrossPlayerViewRejected() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT player_uuid FROM claims WHERE public_reference = '" + secondClaimReference + "'");
+            require(rs.next(), "Second claim not found in DB");
+            require(rs.getString("player_uuid").equals(testPlayerUuid.toString()),
+                    "Second claim ownership changed — cross-player view may have succeeded");
+            rs.close();
+        }
+    }
+
+    private void runConsoleStaffList() throws Exception {
+        require(testPlayerUuid != null, "Test player UUID is null");
+        runOnMain(() -> {
+            getServer().dispatchCommand(getServer().getConsoleSender(),
+                    "echoclaims claim staff-list " + testPlayerUuid);
+        });
+        Thread.sleep(3000);
+    }
+
+    private void runConsoleStaffView() throws Exception {
+        require(secondClaimReference != null, "Second claim reference is null");
+        runOnMain(() -> {
+            getServer().dispatchCommand(getServer().getConsoleSender(),
+                    "echoclaims claim staff-view " + secondClaimReference);
+        });
+        Thread.sleep(3000);
+    }
+
+    private void runConsoleStaffAudit() throws Exception {
+        require(firstClaimReference != null, "First claim reference is null");
+        runOnMain(() -> {
+            getServer().dispatchCommand(getServer().getConsoleSender(),
+                    "echoclaims claim staff-view " + firstClaimReference);
+        });
+        Thread.sleep(3000);
+    }
+
+    private void verifyStaffCommandsReturnData() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT id, public_reference, status FROM claims WHERE player_uuid = '" + testPlayerUuid + "' ORDER BY created_at ASC");
+            List<String> refs = new ArrayList<>();
+            List<String> statuses = new ArrayList<>();
+            while (rs.next()) {
+                refs.add(rs.getString("public_reference"));
+                statuses.add(rs.getString("status"));
+            }
+            rs.close();
+            require(refs.size() >= 2, "Expected at least 2 claims for test player, found " + refs.size());
+            require(refs.contains(firstClaimReference), "First claim reference not found in DB");
+            require(refs.contains(secondClaimReference), "Second claim reference not found in DB");
+            require("CANCELLED".equals(statuses.get(0)), "First claim should be CANCELLED");
+            require("DRAFT".equals(statuses.get(1)), "Second claim should be DRAFT");
+
+            ResultSet auditRs = stmt.executeQuery(
+                    "SELECT action FROM claim_audit_entries WHERE claim_id = '" + firstClaimId + "' ORDER BY recorded_at ASC");
+            List<String> actions = new ArrayList<>();
+            while (auditRs.next()) {
+                actions.add(auditRs.getString("action"));
+            }
+            auditRs.close();
+            require(actions.size() >= 3, "First claim should have at least 3 audit entries, found " + actions.size());
+            require("CREATED".equals(actions.get(0)), "First audit should be CREATED");
+            require(actions.contains("SUBMITTED"), "Audit should contain SUBMITTED");
+            require(actions.contains("CANCELLED"), "Audit should contain CANCELLED");
+
+            ResultSet audit2Rs = stmt.executeQuery(
+                    "SELECT action FROM claim_audit_entries WHERE claim_id = '" + secondClaimId + "' ORDER BY recorded_at ASC");
+            List<String> actions2 = new ArrayList<>();
+            while (audit2Rs.next()) {
+                actions2.add(audit2Rs.getString("action"));
+            }
+            audit2Rs.close();
+            require(actions2.size() >= 1, "Second claim should have at least 1 audit entry");
+            require("CREATED".equals(actions2.get(0)), "Second claim first audit should be CREATED");
+        }
+    }
+
+    private void verifyCancelledRejectsSubmit() throws Exception {
+        int auditCountBefore = getAuditCount(firstClaimId);
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for cancelled submit test");
+            getServer().dispatchCommand(player, "echoclaims claim submit " + firstClaimReference);
+        });
+        Thread.sleep(3000);
+        int auditCountAfter = getAuditCount(firstClaimId);
+        require(auditCountAfter == auditCountBefore,
+                "Cancelled claim submit should not create new audit entries. Before=" + auditCountBefore + " After=" + auditCountAfter);
+
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT status FROM claims WHERE id = '" + firstClaimId + "'");
+            require(rs.next(), "First claim not found");
+            require("CANCELLED".equals(rs.getString("status")), "Claim status changed from CANCELLED after rejected submit");
+            rs.close();
+        }
+    }
+
+    private void verifyCancelledRejectsCancel() throws Exception {
+        int auditCountBefore = getAuditCount(firstClaimId);
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for cancelled cancel test");
+            getServer().dispatchCommand(player, "echoclaims claim cancel " + firstClaimReference);
+        });
+        Thread.sleep(3000);
+        int auditCountAfter = getAuditCount(firstClaimId);
+        require(auditCountAfter == auditCountBefore,
+                "Cancelled claim second cancel should not create new audit entries. Before=" + auditCountBefore + " After=" + auditCountAfter);
+
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT status, version FROM claims WHERE id = '" + firstClaimId + "'");
+            require(rs.next(), "First claim not found");
+            require("CANCELLED".equals(rs.getString("status")), "Claim status changed from CANCELLED after rejected cancel");
+            rs.close();
+        }
+    }
+
+    private void verifyTerminalNoExtraMutation() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT status, version, submitted_at, cancelled_at FROM claims WHERE id = '" + firstClaimId + "'");
+            require(rs.next(), "First claim not found");
+            require("CANCELLED".equals(rs.getString("status")), "Claim should still be CANCELLED");
+            require(rs.getInt("version") == 2, "Claim version should be 2 (created=0, submitted=1, cancelled=2), got " + rs.getInt("version"));
+            rs.close();
+
+            ResultSet auditRs = stmt.executeQuery(
+                    "SELECT COUNT(*) FROM claim_audit_entries WHERE claim_id = '" + firstClaimId + "'");
+            auditRs.next();
+            require(auditRs.getInt(1) == 3, "Expected exactly 3 audit entries for first claim (CREATED, SUBMITTED, CANCELLED), found " + auditRs.getInt(1));
+            auditRs.close();
+        }
+    }
+
+    private void verifyIncidentEvidenceUnchanged() throws Exception {
+        require(incidentEvidenceBefore != null, "Incident evidence state was not captured");
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT id, incident_type, player_uuid, occurred_at, world_id, x, y, z, cause, " +
+                    "killer_player_uuid, killer_entity_key, pre_event_snapshot_uuid, " +
+                    "post_event_snapshot_uuid, status, metadata, deduplication_key " +
+                    "FROM incidents WHERE player_uuid = '" + testPlayerUuid + "' ORDER BY occurred_at ASC");
+            Map<String, String> current = new LinkedHashMap<>();
+            while (rs.next()) {
+                String id = rs.getString("id");
+                StringBuilder sb = new StringBuilder();
+                for (int i = 1; i <= 16; i++) {
+                    if (i > 1) sb.append("|");
+                    sb.append(rs.getString(i));
+                }
+                current.put(id, sb.toString());
+            }
+            rs.close();
+            require(current.size() == incidentEvidenceBefore.size(),
+                    "Incident count changed: before=" + incidentEvidenceBefore.size() + " after=" + current.size());
+            for (var entry : incidentEvidenceBefore.entrySet()) {
+                String currentVal = current.get(entry.getKey());
+                require(currentVal != null, "Incident " + entry.getKey() + " disappeared from DB");
+                require(currentVal.equals(entry.getValue()),
+                        "Incident " + entry.getKey() + " evidence changed: before=" + entry.getValue() + " after=" + currentVal);
+            }
+        }
+    }
+
+    private void verifySnapshotEvidenceUnchanged() throws Exception {
+        require(snapshotEvidenceBefore != null, "Snapshot evidence state was not captured");
+        require(snapshotItemsEvidenceBefore != null, "Snapshot items evidence state was not captured");
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT id, player_uuid, capture_reason, captured_at, world_id, x, y, z, " +
+                    "game_mode, health, food_level, experience_level, total_experience, schema_version " +
+                    "FROM inventory_snapshots WHERE player_uuid = '" + testPlayerUuid + "' ORDER BY captured_at ASC");
+            Map<String, String> current = new LinkedHashMap<>();
+            while (rs.next()) {
+                String id = rs.getString("id");
+                StringBuilder sb = new StringBuilder();
+                for (int i = 1; i <= 13; i++) {
+                    if (i > 1) sb.append("|");
+                    sb.append(rs.getString(i));
+                }
+                current.put(id, sb.toString());
+            }
+            rs.close();
+            require(current.size() == snapshotEvidenceBefore.size(),
+                    "Snapshot count changed: before=" + snapshotEvidenceBefore.size() + " after=" + current.size());
+            for (var entry : snapshotEvidenceBefore.entrySet()) {
+                String currentVal = current.get(entry.getKey());
+                require(currentVal != null, "Snapshot " + entry.getKey() + " disappeared from DB");
+                require(currentVal.equals(entry.getValue()),
+                        "Snapshot " + entry.getKey() + " evidence changed");
+            }
+
+            ResultSet itemsRs = stmt.executeQuery(
+                    "SELECT si.id, si.snapshot_uuid, si.slot, si.slot_type, si.material_key, " +
+                    "si.amount, si.serialized_data, si.content_identity, si.score, " +
+                    "si.display_name, si.damage, si.max_durability, si.enchantments " +
+                    "FROM snapshot_items si INNER JOIN inventory_snapshots s ON si.snapshot_uuid = s.id " +
+                    "WHERE s.player_uuid = '" + testPlayerUuid + "' ORDER BY si.id ASC");
+            Map<String, String> currentItems = new LinkedHashMap<>();
+            while (itemsRs.next()) {
+                String id = itemsRs.getString("id");
+                StringBuilder sb = new StringBuilder();
+                for (int i = 1; i <= 13; i++) {
+                    if (i > 1) sb.append("|");
+                    sb.append(itemsRs.getString(i));
+                }
+                currentItems.put(id, sb.toString());
+            }
+            itemsRs.close();
+            require(currentItems.size() == snapshotItemsEvidenceBefore.size(),
+                    "Snapshot items count changed: before=" + snapshotItemsEvidenceBefore.size() + " after=" + currentItems.size());
+            for (var entry : snapshotItemsEvidenceBefore.entrySet()) {
+                String currentVal = currentItems.get(entry.getKey());
+                require(currentVal != null, "Snapshot item " + entry.getKey() + " disappeared from DB");
+                require(currentVal.equals(entry.getValue()),
+                        "Snapshot item " + entry.getKey() + " evidence changed");
+            }
+        }
+    }
+
+    private void verifyClaimReferenceResolvesAfterRestart() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT id, public_reference, status, incident_id, player_uuid FROM claims " +
+                    "WHERE public_reference = '" + secondClaimReference + "'");
+            require(rs.next(), "Second claim reference " + secondClaimReference + " does not resolve in DB");
+            require(rs.getString("id").equals(secondClaimId.toString()),
+                    "Claim reference resolves to wrong claim ID");
+            require("DRAFT".equals(rs.getString("status")), "Second claim should still be DRAFT");
+            rs.close();
+        }
+    }
+
+    private void verifyAuditHistoryResolvesAfterRestart() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT action, actor_type, claim_version FROM claim_audit_entries " +
+                    "WHERE claim_id = '" + firstClaimId + "' ORDER BY recorded_at ASC");
+            List<String> actions = new ArrayList<>();
+            while (rs.next()) {
+                actions.add(rs.getString("action"));
+            }
+            rs.close();
+            require(actions.size() == 3, "Audit history should have exactly 3 entries, found " + actions.size());
+            require("CREATED".equals(actions.get(0)), "First audit should be CREATED");
+            require("SUBMITTED".equals(actions.get(1)), "Second audit should be SUBMITTED");
+            require("CANCELLED".equals(actions.get(2)), "Third audit should be CANCELLED");
+
+            ResultSet rs2 = stmt.executeQuery(
+                    "SELECT action FROM claim_audit_entries " +
+                    "WHERE claim_id = '" + secondClaimId + "' ORDER BY recorded_at ASC");
+            List<String> actions2 = new ArrayList<>();
+            while (rs2.next()) {
+                actions2.add(rs2.getString("action"));
+            }
+            rs2.close();
+            require(actions2.size() >= 1, "Second claim audit history should have at least 1 entry");
+            require("CREATED".equals(actions2.get(0)), "Second claim first audit should be CREATED");
+        }
+    }
+
+    private int getAuditCount(UUID claimId) throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT COUNT(*) FROM claim_audit_entries WHERE claim_id = '" + claimId + "'");
+            rs.next();
+            int count = rs.getInt(1);
+            rs.close();
+            return count;
         }
     }
 

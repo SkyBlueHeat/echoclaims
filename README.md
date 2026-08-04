@@ -2,6 +2,8 @@
 
 **Resolve lost-item claims with server evidence instead of screenshots.**
 
+[![CI](https://github.com/SkyBlueHeat/echoclaims/actions/workflows/ci.yml/badge.svg)](https://github.com/SkyBlueHeat/echoclaims/actions/workflows/ci.yml)
+
 EchoClaims is an early-stage commercial Paper plugin foundation. It captures,
 stores, and retrieves server-side evidence so administrators can resolve
 lost-item disputes without relying on player-submitted screenshots.
@@ -34,10 +36,20 @@ runtime validation report.
 ## Building
 
 ```bash
+# Clean build with tests and shaded JAR
 ./gradlew clean test shadowJar --rerun-tasks
+
+# Paper integration tests (disposable Paper server)
+./gradlew paperIntegrationTest --rerun-tasks --no-configuration-cache
+
+# Full runtime validation (disposable Paper server with headless bots)
+./gradlew runtimeValidation --rerun-tasks --no-configuration-cache
 ```
 
 The shaded JAR is produced at `build/libs/echoclaims-0.1.0-SNAPSHOT.jar`.
+
+CI runs all three suites plus production JAR inspection on every pull request
+and push to `main`. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Installation
 

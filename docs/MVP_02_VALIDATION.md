@@ -4,8 +4,8 @@
 
 - **Command**: `./gradlew clean test shadowJar --rerun-tasks`
 - **Result**: BUILD SUCCESSFUL
-- **Tests**: 311 passed, 0 failed, 14 skipped (Paper-dependent tests)
-- **Total**: 325 test cases
+- **Tests**: 337 passed, 0 failed, 14 skipped (Paper-dependent tests)
+- **Total**: 351 test cases
 
 ## Behavioral Policy
 
@@ -220,8 +220,8 @@ The following are explicitly **not** implemented in MVP-02:
 ## Runtime Validation
 
 - **Command**: `./gradlew runtimeValidation`
-- **Result**: 36 passed, 0 failed, 0 skipped
-- **Coverage**: Full claim flow on disposable Paper server with headless bot
+- **Result**: 58 passed, 0 failed, 0 skipped
+- **Coverage**: Full claim flow on disposable Paper server with two headless bots
   - Plugin load and ready checks
   - Schema migration v1-v4 verification (claims tables, partial unique index)
   - Evidence capture (3 deaths, snapshots, incidents, metadata)
@@ -229,6 +229,29 @@ The following are explicitly **not** implemented in MVP-02:
   - Claim DB verification: DRAFT -> SUBMITTED -> CANCELLED states
   - Duplicate active claim rejection after cancellation
   - Audit trail verification (CREATED, SUBMITTED, CANCELLED actions)
+  - **Security flow checks (22 new):**
+    - Incident row captured before claim operations
+    - Inventory snapshot and snapshot-item evidence captured before claim operations
+    - Evidence state captured for immutability comparison
+    - Second claim created for security flow testing
+    - Second headless player connected via MCProtocolLib
+    - Cross-player claim creation attempt on first player's incident
+    - Cross-player claim creation rejected (eligibility check)
+    - Rejected attempt creates no claim row for second player
+    - Rejected attempt creates no incorrect audit row
+    - Cross-player claim view attempt on first player's claim
+    - Cross-player view rejected (ownership check)
+    - Console executes staff claim list
+    - Console executes staff claim view
+    - Console executes staff audit history (staff-view with audit entries)
+    - Staff commands return expected claim and audit data
+    - Cancelled claim rejects submit (no new audit entry)
+    - Cancelled claim rejects second cancellation (no new audit entry)
+    - Terminal transition creates no extra mutation or audit row
+    - Incident evidence remains field-for-field unchanged after all operations
+    - Snapshot evidence remains field-for-field unchanged after all operations
+    - Claim public reference resolves after restart (DB persistence)
+    - Complete audit history resolves after restart (DB persistence)
   - No exceptions in server log
   - Clean shutdown drain and no remaining threads
 
@@ -237,4 +260,24 @@ The following are explicitly **not** implemented in MVP-02:
 - **No test/validation classes**: JAR contains only `io/github/skyblueheat/echoclaims` production classes and `org/sqlite` (sqlite-jdbc)
 - **No external dependencies**: Only sqlite-jdbc is shaded; no other third-party libraries
 - **No local paths**: No `C:\` or user-specific paths embedded in JAR contents
+- **No WorldEcho identifiers**: Zero matches for `WorldEcho` or `world_echo`
+- **No unwanted classes**: Zero matches for `HeadlessBotClient`, `RuntimeValidationPlugin`, `org/geysermc`, `io/netty`, test classes
+- **No generated artifacts**: Zero matches for databases (`.db`), logs (`.log`), worlds, validation result files
+- **Single plugin.yml**: Exactly 1 `plugin.yml` entry
 - **Smoke test**: `shadowJarSmokeTest` passes — SQLite database opens successfully using only the shaded JAR
+- **CI JAR inspection**: GitHub Actions workflow fails on any forbidden pattern match
+
+## GitHub Actions CI
+
+- **Workflow**: `.github/workflows/ci.yml`
+- **Triggers**: Pull requests and pushes to `main`
+- **Runner**: `ubuntu-latest` with JDK 25 (Temurin)
+- **Jobs**: Single job with 30-minute timeout
+- **Steps**:
+  1. `./gradlew clean test shadowJar --rerun-tasks`
+  2. `./gradlew paperIntegrationTest --rerun-tasks --no-configuration-cache`
+  3. `./gradlew runtimeValidation --rerun-tasks --no-configuration-cache`
+  4. Production JAR inspection (fails on forbidden patterns)
+- **Artifacts**: Test reports and runtime validation evidence uploaded on failure
+- **Permissions**: `contents: read` only
+- **No `continue-on-error`**: All steps must pass

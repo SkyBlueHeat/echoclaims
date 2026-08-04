@@ -408,11 +408,29 @@ val runtimeValidation = tasks.register("runtimeValidation") {
         botBuilder.redirectErrorStream(true)
         val botProcess = botBuilder.start()
 
-        // Wait for results file (timeout 300 seconds)
+        // File the validation plugin writes to request a second bot
+        val secondBotTrigger = File(serverDir, "need-second-bot")
+        secondBotTrigger.delete()
+        var secondBotProcess: Process? = null
+
+        // Wait for results file (timeout 420 seconds — extended for security flow checks)
         logger.lifecycle("Waiting for validation results...")
-        val deadline = System.currentTimeMillis() + 300_000
+        val deadline = System.currentTimeMillis() + 420_000
         var resultsContent: String? = null
         while (System.currentTimeMillis() < deadline) {
+            // Check if validation plugin needs a second bot
+            if (secondBotProcess == null && secondBotTrigger.exists()) {
+                logger.lifecycle("Starting second headless bot client (TestBot2)")
+                val bot2Builder = ProcessBuilder(
+                    javaPath,
+                    "-cp", runtimeValidationClasspath,
+                    "io.github.skyblueheat.echoclaims.testplugin.HeadlessBotClient",
+                    "127.0.0.1", "25565", "TestBot2"
+                )
+                bot2Builder.redirectErrorStream(true)
+                secondBotProcess = bot2Builder.start()
+                secondBotTrigger.delete()
+            }
             if (resultsFile.exists()) {
                 resultsContent = resultsFile.readText()
                 break
@@ -433,12 +451,26 @@ val runtimeValidation = tasks.register("runtimeValidation") {
                     if (line.isNotBlank()) logger.lifecycle("[Bot] $line")
                 }
             }
+            if (secondBotProcess != null) {
+                val bot2Avail = secondBotProcess.inputStream.available()
+                if (bot2Avail > 0) {
+                    val bot2Bytes = ByteArray(bot2Avail)
+                    secondBotProcess.inputStream.read(bot2Bytes)
+                    val bot2Text = String(bot2Bytes)
+                    for (line in bot2Text.lines()) {
+                        if (line.isNotBlank()) logger.lifecycle("[Bot2] $line")
+                    }
+                }
+            }
             Thread.sleep(500)
         }
 
-        // Stop bot if still running
+        // Stop bots if still running
         if (botProcess.isAlive) {
             botProcess.destroyForcibly()
+        }
+        if (secondBotProcess != null && secondBotProcess.isAlive) {
+            secondBotProcess.destroyForcibly()
         }
 
         // If server is still running, shut it down

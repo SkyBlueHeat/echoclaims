@@ -196,3 +196,31 @@ or its bundled libraries, not by EchoClaims:
 - async-profiler native engine unavailable on Windows (Java fallback used).
 
 These do not indicate EchoClaims failures.
+
+## Continuous Integration
+
+GitHub Actions CI is configured in `.github/workflows/ci.yml`.
+
+### Triggers
+
+- Pull requests (any target branch)
+- Pushes to `main`
+
+### Pipeline
+
+1. **Checkout** and **set up JDK 25** (Temurin)
+2. **Cache Gradle** dependencies and wrapper
+3. **Validate Gradle wrapper** (`./gradlew --version`)
+4. **Clean test shadowJar**: `./gradlew clean test shadowJar --rerun-tasks`
+5. **Paper integration test**: `./gradlew paperIntegrationTest --rerun-tasks --no-configuration-cache`
+6. **Runtime validation**: `./gradlew runtimeValidation --rerun-tasks --no-configuration-cache`
+7. **Production JAR inspection**: Fails on forbidden patterns (test classes, external deps, local paths, WorldEcho identifiers, etc.)
+8. **Upload artifacts** on failure (test reports, runtime validation evidence)
+
+### Configuration
+
+- **Runner**: `ubuntu-latest`
+- **Timeout**: 30 minutes
+- **Permissions**: `contents: read` only
+- **No `continue-on-error`**: All steps must pass
+- **Action versions**: Pinned to stable major versions (v4)
