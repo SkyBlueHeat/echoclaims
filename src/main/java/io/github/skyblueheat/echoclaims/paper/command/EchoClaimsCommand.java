@@ -1,7 +1,16 @@
 package io.github.skyblueheat.echoclaims.paper.command;
 
+import io.github.skyblueheat.echoclaims.application.ClaimCreationService;
+import io.github.skyblueheat.echoclaims.application.ClaimEligibilityService;
+import io.github.skyblueheat.echoclaims.application.ClaimLookupService;
+import io.github.skyblueheat.echoclaims.application.ClaimRateLimitService;
+import io.github.skyblueheat.echoclaims.application.ClaimTransitionService;
 import io.github.skyblueheat.echoclaims.application.EvidenceLookupService;
 import io.github.skyblueheat.echoclaims.application.StatusService;
+import io.github.skyblueheat.echoclaims.config.EchoClaimsSettings;
+import io.github.skyblueheat.echoclaims.domain.claim.Claim;
+import io.github.skyblueheat.echoclaims.domain.claim.ClaimAuditEntry;
+import io.github.skyblueheat.echoclaims.domain.claim.ClaimStatus;
 import io.github.skyblueheat.echoclaims.domain.incident.Incident;
 import io.github.skyblueheat.echoclaims.domain.snapshot.InventorySnapshot;
 import io.github.skyblueheat.echoclaims.domain.snapshot.SnapshotItem;
@@ -13,8 +22,10 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -40,14 +51,33 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
     public static final String PERMISSION_INCIDENTS = "echoclaims.command.incidents";
     public static final String PERMISSION_INCIDENT = "echoclaims.command.incident";
     public static final String PERMISSION_SNAPSHOT = "echoclaims.command.snapshot";
+    public static final String PERMISSION_CLAIM_LIST = "echoclaims.command.claim.list";
+    public static final String PERMISSION_CLAIM_VIEW = "echoclaims.command.claim.view";
+    public static final String PERMISSION_CLAIM_CREATE = "echoclaims.command.claim.create";
+    public static final String PERMISSION_CLAIM_CANCEL = "echoclaims.command.claim.cancel";
+    public static final String PERMISSION_CLAIM_SUBMIT = "echoclaims.command.claim.submit";
+    public static final String PERMISSION_CLAIM_STAFF_VIEW = "echoclaims.command.claim.staff.view";
+    public static final String PERMISSION_CLAIM_STAFF_LIST = "echoclaims.command.claim.staff.list";
 
     private static final List<String> SUBCOMMANDS =
-            List.of("status", "incidents", "incident", "snapshot");
+            List.of("status", "incidents", "incident", "snapshot",
+                    "claim");
+
+    private static final List<String> CLAIM_SUBCOMMANDS =
+            List.of("list", "view", "create", "cancel", "submit", "claimable");
+
+    private static final List<String> CLAIM_STAFF_SUBCOMMANDS =
+            List.of("staff-view", "staff-list");
 
     private final Plugin plugin;
     private final Supplier<MessageService> messageSupplier;
     private final Supplier<StatusService> statusServiceSupplier;
     private final Supplier<EvidenceLookupService> evidenceLookupSupplier;
+    private final Supplier<ClaimLookupService> claimLookupSupplier;
+    private final Supplier<ClaimCreationService> claimCreationSupplier;
+    private final Supplier<ClaimTransitionService> claimTransitionSupplier;
+    private final Supplier<ClaimRateLimitService> claimRateLimitSupplier;
+    private final Supplier<EchoClaimsSettings> settingsSupplier;
     private final ExecutorService queryExecutor;
     private final Consumer<Runnable> syncScheduler;
     private final Logger logger;
@@ -57,6 +87,11 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
             Supplier<MessageService> messageSupplier,
             Supplier<StatusService> statusServiceSupplier,
             Supplier<EvidenceLookupService> evidenceLookupSupplier,
+            Supplier<ClaimLookupService> claimLookupSupplier,
+            Supplier<ClaimCreationService> claimCreationSupplier,
+            Supplier<ClaimTransitionService> claimTransitionSupplier,
+            Supplier<ClaimRateLimitService> claimRateLimitSupplier,
+            Supplier<EchoClaimsSettings> settingsSupplier,
             ExecutorService queryExecutor,
             Consumer<Runnable> syncScheduler,
             Logger logger
@@ -65,6 +100,11 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
         this.messageSupplier = Objects.requireNonNull(messageSupplier, "messageSupplier");
         this.statusServiceSupplier = Objects.requireNonNull(statusServiceSupplier, "statusServiceSupplier");
         this.evidenceLookupSupplier = Objects.requireNonNull(evidenceLookupSupplier, "evidenceLookupSupplier");
+        this.claimLookupSupplier = Objects.requireNonNull(claimLookupSupplier, "claimLookupSupplier");
+        this.claimCreationSupplier = Objects.requireNonNull(claimCreationSupplier, "claimCreationSupplier");
+        this.claimTransitionSupplier = Objects.requireNonNull(claimTransitionSupplier, "claimTransitionSupplier");
+        this.claimRateLimitSupplier = Objects.requireNonNull(claimRateLimitSupplier, "claimRateLimitSupplier");
+        this.settingsSupplier = Objects.requireNonNull(settingsSupplier, "settingsSupplier");
         this.queryExecutor = Objects.requireNonNull(queryExecutor, "queryExecutor");
         this.syncScheduler = Objects.requireNonNull(syncScheduler, "syncScheduler");
         this.logger = Objects.requireNonNull(logger, "logger");
@@ -111,6 +151,7 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
                 }
                 snapshot(sender, args);
             }
+            case "claim" -> handleClaim(sender, args);
             default -> messages().send(sender, "unknown-subcommand");
         }
 
@@ -150,6 +191,19 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
         line(sender, "evidence.failed", Long.toString(report.evidenceFailed()));
         line(sender, "evidence.rejected", Long.toString(report.evidenceRejected()));
         line(sender, "evidence.pending", Integer.toString(report.evidencePending()));
+        line(sender, "claims.enabled", Boolean.toString(report.claimsEnabled()));
+        line(sender, "claims.total", Long.toString(report.totalClaims()));
+        line(sender, "claims.draft", Long.toString(report.draftClaims()));
+        line(sender, "claims.submitted", Long.toString(report.submittedClaims()));
+        line(sender, "claims.cancelled", Long.toString(report.cancelledClaims()));
+        line(sender, "claims.audit-entries", Long.toString(report.totalClaimAuditEntries()));
+        line(sender, "claims.created", Long.toString(report.claimsCreated()));
+        line(sender, "claims.submitted-metric", Long.toString(report.claimsSubmitted()));
+        line(sender, "claims.cancelled-metric", Long.toString(report.claimsCancelled()));
+        line(sender, "claims.rejected", Long.toString(report.claimsRejected()));
+        line(sender, "claims.duplicate-open", Long.toString(report.duplicateOpenClaims()));
+        line(sender, "claims.rate-limited", Long.toString(report.rateLimitedClaims()));
+        line(sender, "claims.concurrency-conflicts", Long.toString(report.claimConcurrencyConflicts()));
     }
 
     private void incidents(CommandSender sender, String[] args) {
@@ -344,6 +398,501 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
         }
     }
 
+    private void handleClaim(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            messages().send(sender, "claim-usage");
+            return;
+        }
+
+        switch (args[1].toLowerCase(Locale.ROOT)) {
+            case "list" -> claimList(sender);
+            case "view" -> claimView(sender, args);
+            case "create" -> claimCreate(sender, args);
+            case "cancel" -> claimCancel(sender, args);
+            case "submit" -> claimSubmit(sender, args);
+            case "claimable" -> claimClaimable(sender);
+            case "staff-view" -> claimStaffView(sender, args);
+            case "staff-list" -> claimStaffList(sender, args);
+            default -> messages().send(sender, "claim-unknown-subcommand");
+        }
+    }
+
+    private void claimList(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            messages().send(sender, "claim-player-only");
+            return;
+        }
+        if (!hasPermission(sender, PERMISSION_ADMIN, PERMISSION_CLAIM_LIST)) {
+            messages().send(sender, "no-permission");
+            return;
+        }
+
+        ClaimLookupService lookup = claimLookupSupplier.get();
+        if (lookup == null) {
+            messages().send(sender, "not-ready");
+            return;
+        }
+
+        UUID playerUuid = player.getUniqueId();
+        queryExecutor.submit(() -> {
+            try {
+                List<Claim> claims = lookup.findClaimsByPlayer(playerUuid);
+                syncScheduler.accept(() -> sendClaimList(sender, claims, lookup.maxRecentResults()));
+            } catch (Exception exception) {
+                logger.log(Level.WARNING, "Claim list failed for " + playerUuid, exception);
+                syncScheduler.accept(() -> messages().send(sender, "db-error"));
+            }
+        });
+    }
+
+    private void sendClaimList(CommandSender sender, List<Claim> claims, int max) {
+        if (claims.isEmpty()) {
+            messages().send(sender, "claim-list-empty");
+            return;
+        }
+
+        messages().send(sender, "claim-list-header");
+        for (int i = 0; i < claims.size(); i++) {
+            Claim claim = claims.get(i);
+            messages().send(sender, "claim-list-entry", Map.of(
+                    "index", Integer.toString(i + 1),
+                    "reference", claim.publicReference(),
+                    "status", claim.status().name(),
+                    "time", formatTimestamp(claim.createdAt())
+            ));
+        }
+        messages().send(sender, "claim-list-count", Map.of(
+                "count", Integer.toString(claims.size()),
+                "max", Integer.toString(max)
+        ));
+    }
+
+    private void claimView(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            messages().send(sender, "claim-player-only");
+            return;
+        }
+        if (!hasPermission(sender, PERMISSION_ADMIN, PERMISSION_CLAIM_VIEW)) {
+            messages().send(sender, "no-permission");
+            return;
+        }
+        if (args.length < 3) {
+            messages().send(sender, "claim-usage");
+            return;
+        }
+
+        String reference = args[2];
+        ClaimLookupService lookup = claimLookupSupplier.get();
+        if (lookup == null) {
+            messages().send(sender, "not-ready");
+            return;
+        }
+
+        UUID playerUuid = player.getUniqueId();
+        queryExecutor.submit(() -> {
+            try {
+                Optional<Claim> claimOpt = lookup.findClaimByPublicReference(reference);
+                if (claimOpt.isPresent() && !claimOpt.get().playerUuid().equals(playerUuid)
+                        && !sender.hasPermission(PERMISSION_ADMIN)) {
+                    syncScheduler.accept(() -> messages().send(sender, "claim-not-found",
+                            Map.of("reference", reference)));
+                    return;
+                }
+                Optional<List<ClaimAuditEntry>> auditOpt = claimOpt.isPresent()
+                        ? Optional.of(lookup.findAuditEntries(claimOpt.get().id()))
+                        : Optional.empty();
+                syncScheduler.accept(() -> sendClaimDetail(sender, claimOpt, auditOpt, reference));
+            } catch (Exception exception) {
+                logger.log(Level.WARNING, "Claim view failed for " + reference, exception);
+                syncScheduler.accept(() -> messages().send(sender, "db-error"));
+            }
+        });
+    }
+
+    private void sendClaimDetail(CommandSender sender, Optional<Claim> claimOpt,
+                                  Optional<List<ClaimAuditEntry>> auditOpt, String reference) {
+        if (claimOpt.isEmpty()) {
+            messages().send(sender, "claim-not-found", Map.of("reference", reference));
+            return;
+        }
+
+        Claim claim = claimOpt.get();
+        messages().send(sender, "claim-detail-header", Map.of("reference", claim.publicReference()));
+        line(sender, "claim-id", claim.id().toString());
+        line(sender, "claim-status", claim.status().name());
+        line(sender, "claim-incident", claim.incidentId().toString());
+        line(sender, "claim-created-at", formatTimestamp(claim.createdAt()));
+        if (claim.submittedAt() > 0) {
+            line(sender, "claim-submitted", formatTimestamp(claim.submittedAt()));
+        }
+        if (claim.cancelledAt() > 0) {
+            line(sender, "claim-cancelled", formatTimestamp(claim.cancelledAt()));
+        }
+        if (claim.hasDescription()) {
+            line(sender, "claim-description", claim.description());
+        }
+        line(sender, "claim-version", Integer.toString(claim.version()));
+
+        List<ClaimAuditEntry> audit = auditOpt.orElse(List.of());
+        if (!audit.isEmpty()) {
+            messages().send(sender, "claim-audit-header", Map.of("count", Integer.toString(audit.size())));
+            for (ClaimAuditEntry entry : audit) {
+                messages().send(sender, "claim-audit-entry", Map.of(
+                        "action", entry.action().name(),
+                        "actor", entry.actorType().name(),
+                        "time", formatTimestamp(entry.recordedAt()),
+                        "version", Integer.toString(entry.claimVersion())
+                ));
+            }
+        }
+    }
+
+    private void claimCreate(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            messages().send(sender, "claim-player-only");
+            return;
+        }
+        if (!hasPermission(sender, PERMISSION_ADMIN, PERMISSION_CLAIM_CREATE)) {
+            messages().send(sender, "no-permission");
+            return;
+        }
+
+        EchoClaimsSettings settings = settingsSupplier.get();
+        if (!settings.claimsEnabled()) {
+            messages().send(sender, "claim-disabled");
+            return;
+        }
+
+        if (args.length < 3) {
+            messages().send(sender, "claim-usage");
+            return;
+        }
+
+        String incidentInput = args[2];
+        String description = "";
+        if (args.length > 3) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 3; i < args.length; i++) {
+                if (!sb.isEmpty()) sb.append(" ");
+                sb.append(args[i]);
+            }
+            description = sb.toString();
+        }
+        if (description.length() > settings.claimMaxDescriptionLength()) {
+            description = description.substring(0, settings.claimMaxDescriptionLength());
+        }
+
+        UUID playerUuid = player.getUniqueId();
+        ClaimRateLimitService rateLimiter = claimRateLimitSupplier.get();
+        if (rateLimiter != null) {
+            ClaimRateLimitService.RateLimitResult rateResult = rateLimiter.check(playerUuid);
+            if (!rateResult.isAllowed()) {
+                messages().send(sender, "claim-rate-limited", Map.of(
+                        "seconds", Long.toString(rateResult.remainingMillis() / 1000)
+                ));
+                return;
+            }
+        }
+
+        EvidenceLookupService evidenceLookup = evidenceLookupSupplier.get();
+        ClaimCreationService creationService = claimCreationSupplier.get();
+        ClaimLookupService lookup = claimLookupSupplier.get();
+        if (evidenceLookup == null || creationService == null || lookup == null) {
+            messages().send(sender, "not-ready");
+            return;
+        }
+
+        String finalDescription = description;
+        queryExecutor.submit(() -> {
+            try {
+                Optional<Incident> incidentOpt = resolveIncident(evidenceLookup, incidentInput, playerUuid);
+                if (incidentOpt.isEmpty()) {
+                    syncScheduler.accept(() -> messages().send(sender, "claim-incident-not-found",
+                            Map.of("input", incidentInput)));
+                    return;
+                }
+                Incident incident = incidentOpt.get();
+                UUID incidentId = incident.id();
+
+                ClaimEligibilityService.EligibilityResult eligibility =
+                        ClaimEligibilityService.evaluate(incident, playerUuid);
+                if (!eligibility.isEligible()) {
+                    String reason = eligibility.rejectionReason().orElse("Not eligible");
+                    syncScheduler.accept(() -> messages().send(sender, "claim-not-eligible",
+                            Map.of("reason", reason)));
+                    return;
+                }
+
+                List<Claim> openClaims = lookup.findOpenClaimsByIncident(incidentId);
+                if (!openClaims.isEmpty()) {
+                    syncScheduler.accept(() -> messages().send(sender, "claim-duplicate-open",
+                            Map.of("reference", openClaims.get(0).publicReference())));
+                    return;
+                }
+
+                Claim claim = creationService.createClaim(incident, playerUuid, finalDescription);
+                if (rateLimiter != null) {
+                    rateLimiter.recordCreation(playerUuid);
+                }
+                syncScheduler.accept(() -> messages().send(sender, "claim-created", Map.of(
+                        "reference", claim.publicReference()
+                )));
+            } catch (Exception exception) {
+                logger.log(Level.WARNING, "Claim creation failed for input " + incidentInput, exception);
+                syncScheduler.accept(() -> messages().send(sender, "db-error"));
+            }
+        });
+    }
+
+    private Optional<Incident> resolveIncident(
+            EvidenceLookupService evidenceLookup,
+            String input,
+            UUID playerUuid
+    ) throws java.sql.SQLException {
+        Optional<UUID> uuidOpt = parseUuid(input);
+        if (uuidOpt.isPresent()) {
+            return evidenceLookup.findIncidentById(uuidOpt.get());
+        }
+
+        try {
+            int index = Integer.parseInt(input);
+            if (index < 1) {
+                return Optional.empty();
+            }
+            List<Incident> incidents = evidenceLookup.findIncidentsByPlayer(playerUuid);
+            if (index > incidents.size()) {
+                return Optional.empty();
+            }
+            return Optional.of(incidents.get(index - 1));
+        } catch (NumberFormatException ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private void claimClaimable(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            messages().send(sender, "claim-player-only");
+            return;
+        }
+        if (!hasPermission(sender, PERMISSION_ADMIN, PERMISSION_CLAIM_CREATE)) {
+            messages().send(sender, "no-permission");
+            return;
+        }
+
+        EvidenceLookupService evidenceLookup = evidenceLookupSupplier.get();
+        ClaimLookupService lookup = claimLookupSupplier.get();
+        if (evidenceLookup == null || lookup == null) {
+            messages().send(sender, "not-ready");
+            return;
+        }
+
+        UUID playerUuid = player.getUniqueId();
+        queryExecutor.submit(() -> {
+            try {
+                List<Incident> incidents = evidenceLookup.findIncidentsByPlayer(playerUuid);
+                List<Incident> openIncidents = new ArrayList<>();
+                for (Incident incident : incidents) {
+                    if (incident.status() == io.github.skyblueheat.echoclaims.domain.incident.IncidentStatus.OPEN) {
+                        List<Claim> openClaims = lookup.findOpenClaimsByIncident(incident.id());
+                        if (openClaims.isEmpty()) {
+                            openIncidents.add(incident);
+                        }
+                    }
+                }
+                syncScheduler.accept(() -> sendClaimableList(sender, openIncidents));
+            } catch (Exception exception) {
+                logger.log(Level.WARNING, "Claimable list failed for " + playerUuid, exception);
+                syncScheduler.accept(() -> messages().send(sender, "db-error"));
+            }
+        });
+    }
+
+    private void sendClaimableList(CommandSender sender, List<Incident> incidents) {
+        if (incidents.isEmpty()) {
+            messages().send(sender, "claim-claimable-empty");
+            return;
+        }
+        messages().send(sender, "claim-claimable-header");
+        for (int i = 0; i < incidents.size(); i++) {
+            Incident incident = incidents.get(i);
+            messages().send(sender, "claim-claimable-entry", Map.of(
+                    "index", Integer.toString(i + 1),
+                    "type", incident.type().name(),
+                    "time", formatTimestamp(incident.occurredAt()),
+                    "cause", incident.cause()
+            ));
+        }
+        messages().send(sender, "claim-claimable-footer");
+    }
+
+    private void claimCancel(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            messages().send(sender, "claim-player-only");
+            return;
+        }
+        if (!hasPermission(sender, PERMISSION_ADMIN, PERMISSION_CLAIM_CANCEL)) {
+            messages().send(sender, "no-permission");
+            return;
+        }
+        if (args.length < 3) {
+            messages().send(sender, "claim-usage");
+            return;
+        }
+
+        String reference = args[2];
+        transitionClaim(sender, player, reference, ClaimStatus.CANCELLED, "");
+    }
+
+    private void claimSubmit(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            messages().send(sender, "claim-player-only");
+            return;
+        }
+        if (!hasPermission(sender, PERMISSION_ADMIN, PERMISSION_CLAIM_SUBMIT)) {
+            messages().send(sender, "no-permission");
+            return;
+        }
+        if (args.length < 3) {
+            messages().send(sender, "claim-usage");
+            return;
+        }
+
+        String reference = args[2];
+        transitionClaim(sender, player, reference, ClaimStatus.SUBMITTED, "");
+    }
+
+    private void transitionClaim(CommandSender sender, Player player, String reference,
+                                  ClaimStatus target, String reason) {
+        ClaimLookupService lookup = claimLookupSupplier.get();
+        ClaimTransitionService transitionService = claimTransitionSupplier.get();
+        if (lookup == null || transitionService == null) {
+            messages().send(sender, "not-ready");
+            return;
+        }
+
+        UUID playerUuid = player.getUniqueId();
+        queryExecutor.submit(() -> {
+            try {
+                Optional<Claim> claimOpt = lookup.findClaimByPublicReference(reference);
+                if (claimOpt.isEmpty()) {
+                    syncScheduler.accept(() -> messages().send(sender, "claim-not-found",
+                            Map.of("reference", reference)));
+                    return;
+                }
+                Claim claim = claimOpt.get();
+                if (!claim.playerUuid().equals(playerUuid) && !sender.hasPermission(PERMISSION_ADMIN)) {
+                    syncScheduler.accept(() -> messages().send(sender, "claim-not-found",
+                            Map.of("reference", reference)));
+                    return;
+                }
+
+                ClaimTransitionService.TransitionResult result =
+                        transitionService.transition(claim, target, playerUuid, reason);
+                if (result.isSuccess()) {
+                    String key = target == ClaimStatus.SUBMITTED ? "claim-submitted-success" : "claim-cancelled-success";
+                    syncScheduler.accept(() -> messages().send(sender, key,
+                            Map.of("reference", claim.publicReference())));
+                } else if (result.isConcurrencyConflict()) {
+                    syncScheduler.accept(() -> messages().send(sender, "claim-concurrency-conflict",
+                            Map.of("reference", claim.publicReference())));
+                } else {
+                    String reasonText = result.rejectionReason().orElse("Transition rejected");
+                    syncScheduler.accept(() -> messages().send(sender, "claim-transition-rejected",
+                            Map.of("reference", claim.publicReference(), "reason", reasonText)));
+                }
+            } catch (Exception exception) {
+                logger.log(Level.WARNING, "Claim transition failed for " + reference, exception);
+                syncScheduler.accept(() -> messages().send(sender, "db-error"));
+            }
+        });
+    }
+
+    private void claimStaffView(CommandSender sender, String[] args) {
+        if (!hasPermission(sender, PERMISSION_ADMIN, PERMISSION_CLAIM_STAFF_VIEW)) {
+            messages().send(sender, "no-permission");
+            return;
+        }
+        if (args.length < 3) {
+            messages().send(sender, "claim-usage");
+            return;
+        }
+
+        String reference = args[2];
+        ClaimLookupService lookup = claimLookupSupplier.get();
+        if (lookup == null) {
+            messages().send(sender, "not-ready");
+            return;
+        }
+
+        queryExecutor.submit(() -> {
+            try {
+                Optional<Claim> claimOpt = lookup.findClaimByPublicReference(reference);
+                Optional<List<ClaimAuditEntry>> auditOpt = claimOpt.isPresent()
+                        ? Optional.of(lookup.findAuditEntries(claimOpt.get().id()))
+                        : Optional.empty();
+                syncScheduler.accept(() -> sendClaimDetail(sender, claimOpt, auditOpt, reference));
+            } catch (Exception exception) {
+                logger.log(Level.WARNING, "Staff claim view failed for " + reference, exception);
+                syncScheduler.accept(() -> messages().send(sender, "db-error"));
+            }
+        });
+    }
+
+    private void claimStaffList(CommandSender sender, String[] args) {
+        if (!hasPermission(sender, PERMISSION_ADMIN, PERMISSION_CLAIM_STAFF_LIST)) {
+            messages().send(sender, "no-permission");
+            return;
+        }
+        if (args.length < 3) {
+            messages().send(sender, "claim-usage");
+            return;
+        }
+
+        String input = args[2];
+        Optional<UUID> playerUuid = resolvePlayerUuid(input);
+        if (playerUuid.isEmpty()) {
+            messages().send(sender, "invalid-player", Map.of("input", input));
+            return;
+        }
+
+        ClaimLookupService lookup = claimLookupSupplier.get();
+        if (lookup == null) {
+            messages().send(sender, "not-ready");
+            return;
+        }
+
+        UUID uuid = playerUuid.get();
+        String playerName = resolvePlayerName(uuid);
+        queryExecutor.submit(() -> {
+            try {
+                List<Claim> claims = lookup.findClaimsByPlayer(uuid);
+                syncScheduler.accept(() -> {
+                    if (claims.isEmpty()) {
+                        messages().send(sender, "claim-staff-list-empty", Map.of("player", playerName));
+                        return;
+                    }
+                    messages().send(sender, "claim-staff-list-header", Map.of("player", playerName));
+                    for (int i = 0; i < claims.size(); i++) {
+                        Claim claim = claims.get(i);
+                        messages().send(sender, "claim-staff-list-entry", Map.of(
+                                "index", Integer.toString(i + 1),
+                                "reference", claim.publicReference(),
+                                "status", claim.status().name(),
+                                "time", formatTimestamp(claim.createdAt())
+                        ));
+                    }
+                    messages().send(sender, "claim-list-count", Map.of(
+                            "count", Integer.toString(claims.size()),
+                            "max", Integer.toString(lookup.maxRecentResults())
+                    ));
+                });
+            } catch (Exception exception) {
+                logger.log(Level.WARNING, "Staff claim list failed for " + uuid, exception);
+                syncScheduler.accept(() -> messages().send(sender, "db-error"));
+            }
+        });
+    }
+
     private static String formatTimestamp(long epochMillis) {
         return java.time.Instant.ofEpochMilli(epochMillis).toString();
     }
@@ -427,6 +976,17 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
     ) {
         if (args.length == 1) {
             return filter(SUBCOMMANDS, args[0]);
+        }
+
+        if (args.length == 2 && args[0].equalsIgnoreCase("claim")) {
+            List<String> subs = new ArrayList<>(CLAIM_SUBCOMMANDS);
+            if (sender.hasPermission(PERMISSION_ADMIN) || sender.hasPermission(PERMISSION_CLAIM_STAFF_VIEW)) {
+                subs.add("staff-view");
+            }
+            if (sender.hasPermission(PERMISSION_ADMIN) || sender.hasPermission(PERMISSION_CLAIM_STAFF_LIST)) {
+                subs.add("staff-list");
+            }
+            return filter(subs, args[1]);
         }
 
         return List.of();

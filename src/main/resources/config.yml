@@ -67,3 +67,11 @@ evidence:
   max-item-payload-bytes: 65536
   # Maximum queued evidence capture tasks before new ones are rejected.
   queue-capacity: 256
+
+claims:
+  # Enable or disable the claim system entirely.
+  enabled: true
+  # Cooldown in seconds between claim creations per player. Set to 0 to disable.
+  rate-limit-cooldown-seconds: 30
+  # Maximum length of the player-provided claim description.
+  max-description-length: 256

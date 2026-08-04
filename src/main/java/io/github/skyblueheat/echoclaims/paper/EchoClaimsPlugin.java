@@ -1,5 +1,11 @@
 package io.github.skyblueheat.echoclaims.paper;
 
+import io.github.skyblueheat.echoclaims.application.ClaimCreationService;
+import io.github.skyblueheat.echoclaims.application.ClaimLookupService;
+import io.github.skyblueheat.echoclaims.application.ClaimMetrics;
+import io.github.skyblueheat.echoclaims.application.ClaimRateLimitService;
+import io.github.skyblueheat.echoclaims.application.ClaimReferenceGenerator;
+import io.github.skyblueheat.echoclaims.application.ClaimTransitionService;
 import io.github.skyblueheat.echoclaims.application.EvidenceLookupService;
 import io.github.skyblueheat.echoclaims.application.EvidenceMetrics;
 import io.github.skyblueheat.echoclaims.application.EvidencePersistenceService;
@@ -20,11 +26,13 @@ import io.github.skyblueheat.echoclaims.paper.message.MessageService;
 import io.github.skyblueheat.echoclaims.paper.message.PaperMessageService;
 import io.github.skyblueheat.echoclaims.persistence.AuditRecordRepository;
 import io.github.skyblueheat.echoclaims.persistence.AuditWriteQueue;
+import io.github.skyblueheat.echoclaims.persistence.ClaimStore;
 import io.github.skyblueheat.echoclaims.persistence.DatabaseManager;
 import io.github.skyblueheat.echoclaims.persistence.EvidenceStore;
 import io.github.skyblueheat.echoclaims.persistence.IncidentRepository;
 import io.github.skyblueheat.echoclaims.persistence.InventorySnapshotRepository;
 import io.github.skyblueheat.echoclaims.persistence.SqliteAuditRecordRepository;
+import io.github.skyblueheat.echoclaims.persistence.SqliteClaimStore;
 import io.github.skyblueheat.echoclaims.persistence.SqliteEvidenceStore;
 import io.github.skyblueheat.echoclaims.persistence.SqliteIncidentRepository;
 import io.github.skyblueheat.echoclaims.persistence.SqliteInventorySnapshotRepository;
@@ -50,6 +58,10 @@ public final class EchoClaimsPlugin extends JavaPlugin {
     private volatile StatusService statusService;
     private volatile EvidenceLookupService evidenceLookupService;
     private volatile ItemSerializer itemSerializer;
+    private volatile ClaimLookupService claimLookupService;
+    private volatile ClaimCreationService claimCreationService;
+    private volatile ClaimTransitionService claimTransitionService;
+    private volatile ClaimRateLimitService claimRateLimitService;
 
     private IntegrationRegistry integrations;
     private DatabaseManager databaseManager;
@@ -61,6 +73,9 @@ public final class EchoClaimsPlugin extends JavaPlugin {
     private EvidenceMetrics evidenceMetrics;
     private EvidencePersistenceService evidenceService;
     private DeathCaptureService deathCaptureService;
+    private ClaimStore claimStore;
+    private ClaimMetrics claimMetrics;
+    private ClaimReferenceGenerator claimReferenceGenerator;
     private ExecutorService queryExecutor;
     private long startedAt;
 
@@ -216,12 +231,23 @@ public final class EchoClaimsPlugin extends JavaPlugin {
         );
         getServer().getPluginManager().registerEvents(deathCaptureService, this);
 
+        claimStore = new SqliteClaimStore(databaseManager);
+        claimMetrics = new ClaimMetrics();
+        claimReferenceGenerator = new ClaimReferenceGenerator();
+        claimRateLimitService = new ClaimRateLimitService(settings.claimRateLimitCooldown());
+        claimLookupService = new ClaimLookupService(claimStore, settings.maxRecentResults());
+        claimCreationService = new ClaimCreationService(
+                claimStore, claimReferenceGenerator, claimMetrics);
+        claimTransitionService = new ClaimTransitionService(claimStore, claimMetrics);
+
         statusService = new StatusService(
                 () -> settings,
                 databaseManager,
                 writeQueue,
                 integrations,
                 evidenceService,
+                claimMetrics,
+                claimLookupService,
                 getPluginMeta().getVersion(),
                 startedAt
         );
@@ -250,6 +276,11 @@ public final class EchoClaimsPlugin extends JavaPlugin {
                 () -> (MessageService) messages,
                 () -> statusService,
                 () -> evidenceLookupService,
+                () -> claimLookupService,
+                () -> claimCreationService,
+                () -> claimTransitionService,
+                () -> claimRateLimitService,
+                () -> settings,
                 queryExecutor,
                 runnable -> getServer().getScheduler().runTask(this, runnable),
                 getLogger()
