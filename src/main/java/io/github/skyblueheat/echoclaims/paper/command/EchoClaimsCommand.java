@@ -6,6 +6,7 @@ import io.github.skyblueheat.echoclaims.application.ClaimLookupService;
 import io.github.skyblueheat.echoclaims.application.ClaimRateLimitService;
 import io.github.skyblueheat.echoclaims.application.ClaimTransitionService;
 import io.github.skyblueheat.echoclaims.application.EvidenceLookupService;
+import io.github.skyblueheat.echoclaims.application.IncidentSelectionSession;
 import io.github.skyblueheat.echoclaims.application.StatusService;
 import io.github.skyblueheat.echoclaims.config.EchoClaimsSettings;
 import io.github.skyblueheat.echoclaims.domain.claim.Claim;
@@ -77,6 +78,7 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
     private final Supplier<ClaimCreationService> claimCreationSupplier;
     private final Supplier<ClaimTransitionService> claimTransitionSupplier;
     private final Supplier<ClaimRateLimitService> claimRateLimitSupplier;
+    private final Supplier<IncidentSelectionSession> incidentSelectionSessionSupplier;
     private final Supplier<EchoClaimsSettings> settingsSupplier;
     private final ExecutorService queryExecutor;
     private final Consumer<Runnable> syncScheduler;
@@ -91,6 +93,7 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
             Supplier<ClaimCreationService> claimCreationSupplier,
             Supplier<ClaimTransitionService> claimTransitionSupplier,
             Supplier<ClaimRateLimitService> claimRateLimitSupplier,
+            Supplier<IncidentSelectionSession> incidentSelectionSessionSupplier,
             Supplier<EchoClaimsSettings> settingsSupplier,
             ExecutorService queryExecutor,
             Consumer<Runnable> syncScheduler,
@@ -104,6 +107,7 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
         this.claimCreationSupplier = Objects.requireNonNull(claimCreationSupplier, "claimCreationSupplier");
         this.claimTransitionSupplier = Objects.requireNonNull(claimTransitionSupplier, "claimTransitionSupplier");
         this.claimRateLimitSupplier = Objects.requireNonNull(claimRateLimitSupplier, "claimRateLimitSupplier");
+        this.incidentSelectionSessionSupplier = Objects.requireNonNull(incidentSelectionSessionSupplier, "incidentSelectionSessionSupplier");
         this.settingsSupplier = Objects.requireNonNull(settingsSupplier, "settingsSupplier");
         this.queryExecutor = Objects.requireNonNull(queryExecutor, "queryExecutor");
         this.syncScheduler = Objects.requireNonNull(syncScheduler, "syncScheduler");
@@ -605,10 +609,44 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
         String finalDescription = description;
         queryExecutor.submit(() -> {
             try {
-                Optional<Incident> incidentOpt = resolveIncident(evidenceLookup, incidentInput, playerUuid);
+                Optional<UUID> uuidOpt = parseUuid(incidentInput);
+                Optional<Incident> incidentOpt;
+                boolean sessionExpired = false;
+
+                if (uuidOpt.isPresent()) {
+                    incidentOpt = evidenceLookup.findIncidentById(uuidOpt.get());
+                } else {
+                    try {
+                        int index = Integer.parseInt(incidentInput);
+                        if (index < 1) {
+                            incidentOpt = Optional.empty();
+                        } else {
+                            IncidentSelectionSession session = incidentSelectionSessionSupplier.get();
+                            if (session == null) {
+                                incidentOpt = Optional.empty();
+                                sessionExpired = true;
+                            } else {
+                                Optional<UUID> incidentIdOpt = session.resolve(playerUuid, index);
+                                if (incidentIdOpt.isEmpty()) {
+                                    incidentOpt = Optional.empty();
+                                    sessionExpired = true;
+                                } else {
+                                    incidentOpt = evidenceLookup.findIncidentById(incidentIdOpt.get());
+                                }
+                            }
+                        }
+                    } catch (NumberFormatException ignored) {
+                        incidentOpt = Optional.empty();
+                    }
+                }
+
                 if (incidentOpt.isEmpty()) {
-                    syncScheduler.accept(() -> messages().send(sender, "claim-incident-not-found",
-                            Map.of("input", incidentInput)));
+                    if (sessionExpired) {
+                        syncScheduler.accept(() -> messages().send(sender, "claim-selection-expired"));
+                    } else {
+                        syncScheduler.accept(() -> messages().send(sender, "claim-incident-not-found",
+                                Map.of("input", incidentInput)));
+                    }
                     return;
                 }
                 Incident incident = incidentOpt.get();
@@ -659,11 +697,15 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
             if (index < 1) {
                 return Optional.empty();
             }
-            List<Incident> incidents = evidenceLookup.findIncidentsByPlayer(playerUuid);
-            if (index > incidents.size()) {
+            IncidentSelectionSession session = incidentSelectionSessionSupplier.get();
+            if (session == null) {
                 return Optional.empty();
             }
-            return Optional.of(incidents.get(index - 1));
+            Optional<UUID> incidentIdOpt = session.resolve(playerUuid, index);
+            if (incidentIdOpt.isEmpty()) {
+                return Optional.empty();
+            }
+            return evidenceLookup.findIncidentById(incidentIdOpt.get());
         } catch (NumberFormatException ignored) {
             return Optional.empty();
         }
@@ -699,6 +741,14 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
                         }
                     }
                 }
+                List<UUID> incidentIds = new ArrayList<>();
+                for (Incident inc : openIncidents) {
+                    incidentIds.add(inc.id());
+                }
+                IncidentSelectionSession session = incidentSelectionSessionSupplier.get();
+                if (session != null) {
+                    session.store(playerUuid, incidentIds);
+                }
                 syncScheduler.accept(() -> sendClaimableList(sender, openIncidents));
             } catch (Exception exception) {
                 logger.log(Level.WARNING, "Claimable list failed for " + playerUuid, exception);
@@ -712,6 +762,8 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
             messages().send(sender, "claim-claimable-empty");
             return;
         }
+        EchoClaimsSettings settings = settingsSupplier.get();
+        long ttlSeconds = settings != null ? settings.claimSelectionSessionTtl().toSeconds() : 120;
         messages().send(sender, "claim-claimable-header");
         for (int i = 0; i < incidents.size(); i++) {
             Incident incident = incidents.get(i);
@@ -722,7 +774,9 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
                     "cause", incident.cause()
             ));
         }
-        messages().send(sender, "claim-claimable-footer");
+        messages().send(sender, "claim-claimable-footer", Map.of(
+                "ttl", Long.toString(ttlSeconds)
+        ));
     }
 
     private void claimCancel(CommandSender sender, String[] args) {

@@ -1,6 +1,7 @@
 package io.github.skyblueheat.echoclaims.paper;
 
 import io.github.skyblueheat.echoclaims.application.ClaimCreationService;
+import io.github.skyblueheat.echoclaims.application.IncidentSelectionSession;
 import io.github.skyblueheat.echoclaims.application.ClaimLookupService;
 import io.github.skyblueheat.echoclaims.application.ClaimMetrics;
 import io.github.skyblueheat.echoclaims.application.ClaimRateLimitService;
@@ -62,6 +63,7 @@ public final class EchoClaimsPlugin extends JavaPlugin {
     private volatile ClaimCreationService claimCreationService;
     private volatile ClaimTransitionService claimTransitionService;
     private volatile ClaimRateLimitService claimRateLimitService;
+    private volatile IncidentSelectionSession incidentSelectionSession;
 
     private IntegrationRegistry integrations;
     private DatabaseManager databaseManager;
@@ -108,6 +110,10 @@ public final class EchoClaimsPlugin extends JavaPlugin {
 
         if (deathCaptureService != null) {
             deathCaptureService.disable();
+        }
+
+        if (incidentSelectionSession != null) {
+            incidentSelectionSession.clearAll();
         }
 
         if (evidenceService != null) {
@@ -235,6 +241,10 @@ public final class EchoClaimsPlugin extends JavaPlugin {
         claimMetrics = new ClaimMetrics();
         claimReferenceGenerator = new ClaimReferenceGenerator();
         claimRateLimitService = new ClaimRateLimitService(settings.claimRateLimitCooldown());
+        incidentSelectionSession = new IncidentSelectionSession(
+                settings.claimSelectionSessionTtl(),
+                settings.claimSelectionSessionMaxPlayers()
+        );
         claimLookupService = new ClaimLookupService(claimStore, settings.maxRecentResults());
         claimCreationService = new ClaimCreationService(
                 claimStore, claimReferenceGenerator, claimMetrics);
@@ -280,6 +290,7 @@ public final class EchoClaimsPlugin extends JavaPlugin {
                 () -> claimCreationService,
                 () -> claimTransitionService,
                 () -> claimRateLimitService,
+                () -> incidentSelectionSession,
                 () -> settings,
                 queryExecutor,
                 runnable -> getServer().getScheduler().runTask(this, runnable),

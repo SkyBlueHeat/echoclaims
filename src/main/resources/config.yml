@@ -75,3 +75,9 @@ claims:
   rate-limit-cooldown-seconds: 30
   # Maximum length of the player-provided claim description.
   max-description-length: 256
+  # Time-to-live in seconds for the incident selection session created by /ec claim claimable.
+  # The session binds displayed indices to exact incident UUIDs so an index never
+  # silently resolves to a different incident.
+  selection-session-ttl-seconds: 120
+  # Maximum number of players tracked simultaneously in selection sessions.
+  selection-session-max-players: 100

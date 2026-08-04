@@ -22,7 +22,9 @@ public record EchoClaimsSettings(
         int evidenceQueueCapacity,
         boolean claimsEnabled,
         Duration claimRateLimitCooldown,
-        int claimMaxDescriptionLength
+        int claimMaxDescriptionLength,
+        Duration claimSelectionSessionTtl,
+        int claimSelectionSessionMaxPlayers
 ) {
 
     public EchoClaimsSettings {
@@ -45,6 +47,10 @@ public record EchoClaimsSettings(
                 ? Duration.ofSeconds(30)
                 : claimRateLimitCooldown;
         claimMaxDescriptionLength = Math.max(0, Math.min(claimMaxDescriptionLength, 1_000));
+        claimSelectionSessionTtl = claimSelectionSessionTtl == null
+                ? Duration.ofSeconds(120)
+                : claimSelectionSessionTtl;
+        claimSelectionSessionMaxPlayers = Math.max(1, Math.min(claimSelectionSessionMaxPlayers, 1_000));
     }
 
     private static String validateSqliteFile(String value) {

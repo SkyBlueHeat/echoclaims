@@ -74,6 +74,7 @@ class EchoClaimsCommandTest {
                 () -> null,
                 () -> null,
                 () -> null,
+                () -> null,
                 () -> io.github.skyblueheat.echoclaims.config.EchoClaimsSettings.defaults(),
                 queryExecutor,
                 runnable -> syncTasks.add(runnable),

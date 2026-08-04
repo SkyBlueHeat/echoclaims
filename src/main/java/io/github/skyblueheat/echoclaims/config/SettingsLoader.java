@@ -48,7 +48,11 @@ public final class SettingsLoader {
                 Duration.ofSeconds(
                         integer(source, warnings, "claims.rate-limit-cooldown-seconds", 30, 0, 3_600)
                 ),
-                integer(source, warnings, "claims.max-description-length", 256, 0, 1_000)
+                integer(source, warnings, "claims.max-description-length", 256, 0, 1_000),
+                Duration.ofSeconds(
+                        integer(source, warnings, "claims.selection-session-ttl-seconds", 120, 10, 3_600)
+                ),
+                integer(source, warnings, "claims.selection-session-max-players", 100, 1, 1_000)
         );
 
         return new SettingsLoadResult(settings, warnings);
