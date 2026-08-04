@@ -7,8 +7,8 @@ api-version: '26.2'
 load: POSTWORLD
 commands:
   echoclaims:
-    description: EchoClaims administration command
-    usage: /echoclaims <status|incidents|incident|snapshot>
+    description: EchoClaims administration and claim command
+    usage: /echoclaims <status|incidents|incident|snapshot|claim>
     aliases: [ec]
     permission: echoclaims.command.status
 permissions:
@@ -26,4 +26,25 @@ permissions:
     default: op
   echoclaims.command.snapshot:
     description: Allows looking up an inventory snapshot by UUID
+    default: op
+  echoclaims.command.claim.list:
+    description: Allows listing own claims
+    default: true
+  echoclaims.command.claim.view:
+    description: Allows viewing own claim details
+    default: true
+  echoclaims.command.claim.create:
+    description: Allows creating a claim
+    default: true
+  echoclaims.command.claim.cancel:
+    description: Allows cancelling own claims
+    default: true
+  echoclaims.command.claim.submit:
+    description: Allows submitting own claims
+    default: true
+  echoclaims.command.claim.staff.view:
+    description: Allows staff to view any claim details
+    default: op
+  echoclaims.command.claim.staff.list:
+    description: Allows staff to list claims for any player
     default: op

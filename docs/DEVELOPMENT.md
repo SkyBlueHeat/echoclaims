@@ -51,17 +51,26 @@ source. JUnit 6 is used via the `junitVersion` property in `gradle.properties`.
 - **Settings loader tests** — Configuration validation and defaults
 - **Schema migrator tests** — Idempotent migrations and schema correctness
 - **Migration v2 tests** — Evidence tables, indexes, uniqueness constraints
+- **Migration v3 tests** — Claim tables, indexes, foreign keys, unique public reference
+- **Migration v4 tests** — Partial unique index for duplicate active claim protection
 - **Write queue tests** — Bounded queue, drain on shutdown, failure handling
 - **Provider registry tests** — Priority ordering, failure suppression
 - **Item scorer tests** — Deterministic scoring with configurable weights
-- **Status service tests** — Status report aggregation with evidence metrics
+- **Status service tests** — Status report aggregation with evidence and claim metrics
 - **Bundled resources tests** — Config defaults, message parity, branding
 - **Audit repository tests** — Insert, batch insert, and count operations
-- **Domain model tests** — InventorySnapshot, SnapshotItem, Incident validation
+- **Domain model tests** — InventorySnapshot, SnapshotItem, Incident, Claim validation
 - **MapCodec tests** — Round-trip encoding/decoding with special characters
 - **Deduplication key tests** — Deterministic key generation and time bucketing
 - **Evidence repository tests** — Snapshot and incident CRUD with transactional atomicity
 - **Evidence persistence service tests** — Async persistence, dedup enforcement, shutdown
+- **Claim transition policy tests** — Allowed and rejected state transitions
+- **Claim eligibility tests** — Ownership, status, and snapshot validation
+- **Claim reference generator tests** — Uniqueness, format, collision handling
+- **Claim rate limit tests** — Bounded memory, cleanup, restart, concurrency
+- **Claim store tests** — Atomicity, duplicate protection, optimistic concurrency, bounded queries
+- **Claim creation service tests** — End-to-end creation with eligibility and duplicate checks
+- **Claim transition service tests** — Transitions with optimistic concurrency and audit
 
 ## Adding a New Migration
 
@@ -128,15 +137,24 @@ pushing.
 6. **Test commands:**
 
    - Run `/echoclaims status` and verify output includes:
-     - version, locale, database availability (`ok`), schema version (`2`),
+     - version, locale, database availability (`ok`), schema version (`4`),
      - queue pending/written/failed/dropped counts,
      - evidence accepted/snapshots/incidents/duplicates/failed/rejected/pending counts,
+     - claims enabled/total/draft/submitted/cancelled/audit-entries/created/submitted/cancelled/rejected/duplicate-open/rate-limited/concurrency-conflicts counts,
      - provider list (`entity:vanilla=AVAILABLE`, `item:vanilla=AVAILABLE`),
      - uptime.
    - Run `/ec status` and confirm the alias produces the same output.
    - Run `/echoclaims incidents <player>` to list recent incidents.
    - Run `/echoclaims incident <uuid>` to view a single incident.
    - Run `/echoclaims snapshot <uuid>` to view a snapshot.
+   - Run `/echoclaims claim claimable` to list claimable incidents.
+   - Run `/echoclaims claim create <index> [description]` to create a claim.
+   - Run `/echoclaims claim list` to list your claims.
+   - Run `/echoclaims claim view <ref>` to view a claim.
+   - Run `/echoclaims claim submit <ref>` to submit a claim.
+   - Run `/echoclaims claim cancel <ref>` to cancel a claim.
+   - Run `/echoclaims claim staff-view <ref>` to view any claim as staff.
+   - Run `/echoclaims claim staff-list <player>` to list a player's claims as staff.
 
 7. **Test evidence capture:**
 
@@ -178,3 +196,31 @@ or its bundled libraries, not by EchoClaims:
 - async-profiler native engine unavailable on Windows (Java fallback used).
 
 These do not indicate EchoClaims failures.
+
+## Continuous Integration
+
+GitHub Actions CI is configured in `.github/workflows/ci.yml`.
+
+### Triggers
+
+- Pull requests (any target branch)
+- Pushes to `main`
+
+### Pipeline
+
+1. **Checkout** and **set up JDK 25** (Temurin)
+2. **Cache Gradle** dependencies and wrapper
+3. **Validate Gradle wrapper** (`./gradlew --version`)
+4. **Clean test shadowJar**: `./gradlew clean test shadowJar --rerun-tasks`
+5. **Paper integration test**: `./gradlew paperIntegrationTest --rerun-tasks --no-configuration-cache`
+6. **Runtime validation**: `./gradlew runtimeValidation --rerun-tasks --no-configuration-cache`
+7. **Production JAR inspection**: Fails on forbidden patterns (test classes, external deps, local paths, WorldEcho identifiers, etc.)
+8. **Upload artifacts** on failure (test reports, runtime validation evidence)
+
+### Configuration
+
+- **Runner**: `ubuntu-latest`
+- **Timeout**: 30 minutes
+- **Permissions**: `contents: read` only
+- **No `continue-on-error`**: All steps must pass
+- **Action versions**: Pinned to stable major versions (v4)

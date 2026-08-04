@@ -43,7 +43,16 @@ public final class SettingsLoader {
                 bool(source, warnings, "evidence.capture.post-respawn", true),
                 integer(source, warnings, "evidence.max-recent-results", 10, 1, 100),
                 integer(source, warnings, "evidence.max-item-payload-bytes", 65_536, 256, 1_048_576),
-                integer(source, warnings, "evidence.queue-capacity", 256, 16, 10_000)
+                integer(source, warnings, "evidence.queue-capacity", 256, 16, 10_000),
+                bool(source, warnings, "claims.enabled", true),
+                Duration.ofSeconds(
+                        integer(source, warnings, "claims.rate-limit-cooldown-seconds", 30, 0, 3_600)
+                ),
+                integer(source, warnings, "claims.max-description-length", 256, 0, 1_000),
+                Duration.ofSeconds(
+                        integer(source, warnings, "claims.selection-session-ttl-seconds", 120, 10, 3_600)
+                ),
+                integer(source, warnings, "claims.selection-session-max-players", 100, 1, 1_000)
         );
 
         return new SettingsLoadResult(settings, warnings);
