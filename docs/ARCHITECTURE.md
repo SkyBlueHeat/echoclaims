@@ -42,7 +42,10 @@ io.github.skyblueheat.echoclaims
 │   ├── ReviewTransitionPolicy  # Actor-aware review state machine
 │   ├── ReviewOutcomePolicy  # Derives/validates final outcomes from item decisions
 │   ├── ReviewEvidenceSelectionSession  # Per-staff, per-claim evidence selection
-│   └── ReviewMetrics  # Thread-safe review lifecycle counters
+│   ├── ReviewMetrics  # Thread-safe review lifecycle counters
+│   ├── RefundService  # Refund creation, execution, retry, and completion
+│   ├── RefundServiceConfig  # Immutable refund settings
+│   └── RefundDeliveryAdapter  # Provider-neutral inventory insertion interface
 ├── config/               # Configuration loading and validation
 │   ├── ConfigurationSource
 │   ├── MapConfigurationSource
@@ -57,7 +60,7 @@ io.github.skyblueheat.echoclaims
 │   ├── content/          # ContentKey, IdentifiedContent, Capability, SemanticRole
 │   ├── incident/         # Incident, IncidentType, IncidentStatus
 │   ├── item/             # ItemDescriptor, ItemScore, ItemScoreWeights
-│   ├── refund/           # (empty, reserved for future)
+│   ├── refund/           # Refund, RefundItem, RefundAuditEntry, RefundStatus, RefundItemStatus, RefundAction, RefundTransitionPolicy
 │   └── snapshot/         # InventorySnapshot, SnapshotItem, CaptureReason, Coordinates
 ├── integration/          # Provider-neutral integration layer
 │   ├── ContentProvider
@@ -78,13 +81,17 @@ io.github.skyblueheat.echoclaims
 ├── paper/                # Paper plugin layer
 │   ├── EchoClaimsPlugin  # Main plugin class
 │   ├── command/
-│   │   └── EchoClaimsCommand  # status, incidents, incident, snapshot, claim, review subcommands
+│   │   ├── EchoClaimsCommand  # status, incidents, incident, snapshot, claim, review, refund subcommands
+│   │   ├── RefundCommandHandler  # refund subcommand delegate
+│   │   └── ReviewCommandHandler  # review subcommand delegate
 │   ├── config/
 │   │   └── BukkitConfigurationSource
 │   ├── listener/
 │   │   └── DeathCaptureService  # PlayerDeathEvent + PlayerRespawnEvent listener
-│   └── message/
-│       └── PaperMessageService
+│   ├── message/
+│   │   └── PaperMessageService
+│   └── refund/
+│       └── PaperRefundDeliveryAdapter  # Bukkit inventory insertion adapter
 └── persistence/          # SQLite persistence
     ├── AuditRecordRepository
     ├── SqliteAuditRecordRepository
@@ -108,6 +115,14 @@ io.github.skyblueheat.echoclaims
     ├── SqliteClaimReviewItemDecisionRepository
     ├── ClaimReviewStore
     ├── SqliteClaimReviewStore
+    ├── RefundRepository
+    ├── SqliteRefundRepository
+    ├── RefundItemRepository
+    ├── SqliteRefundItemRepository
+    ├── RefundAuditRepository
+    ├── SqliteRefundAuditRepository
+    ├── RefundStore
+    ├── SqliteRefundStore
     ├── MapCodec           # Map ↔ delimited string codec for SQLite text columns
     └── migration/
         ├── Migration

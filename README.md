@@ -8,12 +8,14 @@ EchoClaims is an early-stage commercial Paper plugin foundation. It captures,
 stores, and retrieves server-side evidence so administrators can resolve
 lost-item disputes without relying on player-submitted screenshots.
 
-> **Status:** Staff Review System (MVP-03) implemented.
+> **Status:** Refund System (MVP-04) implemented.
 > Player death evidence is captured, persisted, and queryable via admin commands.
 > Players can create, submit, and cancel claims against incidents.
 > Staff can review submitted claims, examine evidence, make per-item decisions,
 > request information from players, and finalize reviews with outcomes (APPROVED,
-> PARTIALLY_APPROVED, REJECTED). Refund and GUI workflows are not yet implemented.
+> PARTIALLY_APPROVED, REJECTED). Approved reviews generate refunds with
+> partial delivery, inventory capacity handling, and crash recovery support.
+> GUI workflows are not yet implemented.
 > See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the current state.
 
 ## Requirements
@@ -90,6 +92,12 @@ and push to `main`. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 | `/echoclaims review partial <ref> [summary]` | `/ec review partial <ref> [summary]` | `echoclaims.staff.review.partial` | Staff: finalize a review as PARTIALLY_APPROVED. |
 | `/echoclaims review reject <ref> <summary>` | `/ec review reject <ref> <summary>` | `echoclaims.staff.review.reject` | Staff: finalize a review as REJECTED (summary required). |
 | `/echoclaims review history <ref>` | `/ec review history <ref>` | `echoclaims.staff.review.history` | Staff: view review history and audit trail. |
+| `/echoclaims refund status <ref>` | `/ec refund status <ref>` | `echoclaims.staff.refund.status` | Staff: view refund status for a claim. |
+| `/echoclaims refund execute <ref>` | `/ec refund execute <ref>` | `echoclaims.staff.refund.execute` | Staff: execute a refund on behalf of a player. |
+| `/echoclaims refund history <ref>` | `/ec refund history <ref>` | `echoclaims.staff.refund.history` | Staff: view refund audit history. |
+| `/echoclaims refund retry <ref>` | `/ec refund retry <ref>` | `echoclaims.staff.refund.retry` | Staff: retry a failed refund. |
+| `/echoclaims refund pending` | `/ec refund pending` | `echoclaims.refund.pending` | Player: view your pending refunds. |
+| `/echoclaims refund claim <ref>` | `/ec refund claim <ref>` | `echoclaims.refund.claim` | Player: claim your refund (self-delivery). |
 
 ## Permissions
 
@@ -120,6 +128,12 @@ and push to `main`. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 | `echoclaims.staff.review.partial` | op | Staff: finalize as PARTIALLY_APPROVED. |
 | `echoclaims.staff.review.reject` | op | Staff: finalize as REJECTED. |
 | `echoclaims.staff.review.history` | op | Staff: view review history and audit trail. |
+| `echoclaims.staff.refund.status` | op | Staff: view refund status. |
+| `echoclaims.staff.refund.execute` | op | Staff: execute a refund. |
+| `echoclaims.staff.refund.history` | op | Staff: view refund audit history. |
+| `echoclaims.staff.refund.retry` | op | Staff: retry a failed refund. |
+| `echoclaims.refund.pending` | true | Player: view own pending refunds. |
+| `echoclaims.refund.claim` | true | Player: claim own refund (self-delivery). |
 
 ## Configuration
 

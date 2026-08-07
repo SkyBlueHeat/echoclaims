@@ -138,3 +138,180 @@ CREATE TABLE claim_audit_entries (
 - `claims.incident_id` → `incidents.id` (ON DELETE RESTRICT)
 - `claim_audit_entries.claim_id` → `claims.id` (ON DELETE RESTRICT)
 - Foreign key enforcement is enabled via `PRAGMA foreign_keys = ON`
+
+## Refund Model (Migration v6)
+
+### Refund
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `UUID` | Unique refund identifier (primary key) |
+| `claimId` | `UUID` | FK to the claim |
+| `reviewId` | `UUID` | FK to the review (UNIQUE — one refund per review) |
+| `playerUuid` | `UUID` | The player receiving the refund |
+| `status` | `RefundStatus` | Current lifecycle status |
+| `createdAt` | `long` | Epoch millis when refund was created |
+| `completedAt` | `long` | Epoch millis when refund was completed (0 if not) |
+| `version` | `int` | Optimistic concurrency version |
+| `metadata` | `Map<String, String>` | Extensible key-value metadata |
+
+### RefundStatus
+
+| Value | Description | Terminal? |
+|-------|-------------|-----------|
+| `PENDING` | Created but not yet ready for delivery | No |
+| `READY` | Ready for delivery | No |
+| `DELIVERING` | Delivery in progress | No |
+| `COMPLETED` | All items delivered | **Yes** (permanently) |
+| `FAILED` | Delivery failed | No (recoverable via retry) |
+
+### RefundItem
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `UUID` | Unique item identifier |
+| `refundId` | `UUID` | FK to the refund |
+| `claimId` | `UUID` | FK to the claim |
+| `reviewId` | `UUID` | FK to the review |
+| `playerUuid` | `UUID` | The player |
+| `evidenceItemReference` | `String` | Reference to evidence item |
+| `snapshotItemUuid` | `UUID` | FK to the snapshot item |
+| `materialKey` | `String` | Material identifier |
+| `refundableQuantity` | `int` | Total quantity to refund |
+| `deliveredQuantity` | `int` | Quantity delivered so far |
+| `serializedData` | `String` | Serialized ItemStack data |
+| `status` | `RefundItemStatus` | Delivery status |
+| `failureReason` | `String` | Reason if delivery failed |
+| `createdAt` | `long` | Epoch millis |
+| `updatedAt` | `long` | Epoch millis of last update |
+| `version` | `int` | Optimistic concurrency version |
+
+### RefundItemStatus
+
+| Value | Description |
+|-------|-------------|
+| `PENDING` | Not yet delivered |
+| `PARTIALLY_DELIVERED` | Some quantity delivered, some remaining |
+| `DELIVERED` | Fully delivered |
+| `FAILED` | Delivery failed |
+
+### RefundAuditEntry
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `UUID` | Unique audit entry identifier |
+| `refundId` | `UUID` | FK to the refund |
+| `claimId` | `UUID` | FK to the claim |
+| `reviewId` | `UUID` | FK to the review |
+| `playerUuid` | `UUID` | The player |
+| `actorUuid` | `UUID` | Who performed the action (null for system) |
+| `action` | `RefundAction` | What action was performed |
+| `itemId` | `UUID` | Related item (null if not item-specific) |
+| `quantity` | `int` | Quantity involved |
+| `reason` | `String` | Human-readable reason |
+| `recordedAt` | `long` | Epoch millis |
+| `metadata` | `Map<String, String>` | Extensible metadata |
+
+### RefundAction
+
+| Value | Description |
+|-------|-------------|
+| `REFUND_CREATED` | Refund was created |
+| `DELIVERY_STARTED` | Delivery execution started |
+| `ITEM_DELIVERED` | Item fully delivered |
+| `ITEM_PARTIALLY_DELIVERED` | Item partially delivered |
+| `ITEM_DELIVERY_FAILED` | Item delivery failed |
+| `REFUND_COMPLETED` | Refund completed — all items delivered |
+| `REFUND_FAILED` | Refund failed |
+| `REFUND_RETRY_QUEUED` | Retry queued for failed refund |
+
+### Database Schema (Migration v6)
+
+#### `refunds` table
+
+```sql
+CREATE TABLE refunds (
+    id TEXT PRIMARY KEY,
+    claim_id TEXT NOT NULL,
+    review_id TEXT NOT NULL UNIQUE,
+    player_uuid TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    created_at INTEGER NOT NULL,
+    completed_at INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 0,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE RESTRICT,
+    FOREIGN KEY (review_id) REFERENCES claim_reviews(id) ON DELETE RESTRICT
+)
+```
+
+#### `refund_items` table
+
+```sql
+CREATE TABLE refund_items (
+    id TEXT PRIMARY KEY,
+    refund_id TEXT NOT NULL,
+    claim_id TEXT NOT NULL,
+    review_id TEXT NOT NULL,
+    player_uuid TEXT NOT NULL,
+    evidence_item_reference TEXT NOT NULL,
+    snapshot_item_uuid TEXT,
+    material_key TEXT NOT NULL,
+    refundable_quantity INTEGER NOT NULL,
+    delivered_quantity INTEGER NOT NULL DEFAULT 0,
+    serialized_data TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    failure_reason TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (refund_id) REFERENCES refunds(id) ON DELETE RESTRICT
+)
+```
+
+#### `refund_audit_entries` table
+
+```sql
+CREATE TABLE refund_audit_entries (
+    id TEXT PRIMARY KEY,
+    refund_id TEXT NOT NULL,
+    claim_id TEXT NOT NULL,
+    review_id TEXT NOT NULL,
+    player_uuid TEXT NOT NULL,
+    actor_uuid TEXT,
+    action TEXT NOT NULL,
+    item_id TEXT,
+    quantity INTEGER NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    recorded_at INTEGER NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY (refund_id) REFERENCES refunds(id) ON DELETE RESTRICT
+)
+```
+
+### Refund Indexes
+
+| Index | Table | Columns | Purpose |
+|-------|-------|---------|---------|
+| `idx_refunds_claim_id` | `refunds` | `claim_id` | Lookup by claim |
+| `idx_refunds_player_uuid` | `refunds` | `player_uuid` | Player refund lookups |
+| `idx_refunds_status` | `refunds` | `status` | Status-based queries |
+| `idx_refund_items_refund_id` | `refund_items` | `refund_id` | Item lookups by refund |
+| `idx_refund_items_status` | `refund_items` | `status` | Pending item queries |
+| `idx_refund_audit_refund_id` | `refund_audit_entries` | `refund_id` | Audit by refund |
+| `idx_refund_audit_recorded_at` | `refund_audit_entries` | `recorded_at DESC` | Audit ordering |
+
+### Idempotency Model
+
+- **UNIQUE(review_id)**: Database prevents duplicate refunds for the same review
+- **COMPLETED is terminal**: SQL guard `AND status != 'COMPLETED'` prevents re-completion
+- **DELIVERING CAS**: Only one thread can enter DELIVERING state
+- **Item delivery**: Only PENDING and PARTIALLY_DELIVERED items are processed
+- **DELIVERED items skipped**: Already-delivered items are never re-delivered
+
+### Offline Player Behavior
+
+If the player is offline when a refund is executed, delivery cannot occur.
+The refund remains in `READY` state until the player is online and the
+refund is executed again. `auto-deliver-on-login` is configured but not
+yet implemented in MVP-04.

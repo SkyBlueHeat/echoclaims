@@ -43,6 +43,7 @@ import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 
 class RefundCommandHandlerTest {
 
@@ -330,6 +331,13 @@ class RefundCommandHandlerTest {
                 new String[]{"refund", "execute", UUID.randomUUID().toString()});
         awaitAsyncAndSync();
         assertTrue(messages.sentKeys.contains("refund-rejected"));
+    }
+
+    // ─── Tab completion test ───
+
+    @Test void tabCompletionReturnsAllRefundSubcommands() {
+        List<String> subs = RefundCommandHandler.REFUND_SUBCOMMANDS;
+        assertIterableEquals(List.of("status", "execute", "history", "retry", "pending", "claim"), subs);
     }
 
     // ─── Disabled refunds ───

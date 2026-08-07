@@ -120,3 +120,118 @@ version at the time of the action, providing a complete history of the claim's
 lifecycle.
 
 Audit entries are never deleted (rule 10: never silently delete audit history).
+
+## Refund Lifecycle
+
+After a review is finalized as APPROVED or PARTIALLY_APPROVED, a refund is
+created. The refund restores approved items to the player's inventory.
+
+### Refund State Diagram
+
+```
+                 ┌─────────┐
+                 │ PENDING │
+                 └────┬────┘
+                      │
+                      ▼
+                 ┌─────────┐
+                 │  READY  │◄────────────┐
+                 └────┬────┘             │
+                      │                  │
+                      ▼                  │
+              ┌──────────────┐           │
+              │ DELIVERING   │           │
+              └──────┬───────┘           │
+                     │                   │
+           ┌────────┼────────┐           │
+           │                 │           │
+           ▼                 ▼           │
+    ┌───────────┐    ┌───────────┐       │
+    │ COMPLETED │    │  FAILED   │───────┘
+    └───────────┘    └───────────┘
+                     (retry if enabled)
+```
+
+### Refund Transitions
+
+| From | To | Trigger | Actor |
+|------|----|---------|-------|
+| PENDING | READY | System marks refund ready | System |
+| READY | DELIVERING | `/ec refund execute` or `/ec refund claim` | Staff/Player |
+| DELIVERING | COMPLETED | All items delivered | System |
+| DELIVERING | READY | Partial delivery — back to READY for retry | System |
+| DELIVERING | FAILED | Delivery error | System |
+| FAILED | READY | `/ec refund retry` (if retry enabled) | Staff |
+
+**Terminal state**: `COMPLETED` — permanently terminal. SQL-level guard
+prevents any transition from COMPLETED.
+
+**FAILED**: Recoverable. Not terminal. Can transition to READY for retry
+if `refunds.retry-failed-refunds` is enabled.
+
+### RefundItem Lifecycle
+
+Each refund item has its own delivery state:
+
+| Status | Description |
+|--------|-------------|
+| `PENDING` | Not yet delivered |
+| `PARTIALLY_DELIVERED` | Some quantity delivered, some remaining |
+| `DELIVERED` | Fully delivered |
+| `FAILED` | Delivery attempted but failed |
+
+`findPendingByRefundId` returns items with status `PENDING` **or**
+`PARTIALLY_DELIVERED`, ensuring partially delivered items are not lost.
+
+### Partial Delivery
+
+When inventory capacity is insufficient:
+
+1. `RefundDeliveryAdapter.deliverItem()` returns a partial result
+2. `deliveredQuantity` is updated to reflect what was inserted
+3. Item status becomes `PARTIALLY_DELIVERED`
+4. Refund transitions back to `READY`
+5. Player can free inventory space and execute again
+6. Only remaining quantity is delivered on next execution
+
+### Completion Rule
+
+A refund may only become `COMPLETED` when **all** refund items have
+`deliveredQuantity == refundableQuantity`. The service checks persisted
+quantities, not just item status, to prevent completion when quantities
+disagree.
+
+### Concurrency Guarantees
+
+- **Optimistic concurrency**: All status transitions use version-based CAS
+- **Atomic transactions**: Refund + items + audit in a single DB transaction
+- **No concurrent execution**: `startDelivery` CAS ensures one owner
+- **COMPLETED is permanently terminal**: SQL guard `AND status != 'COMPLETED'`
+
+### Crash Recovery
+
+See [docs/CRASH_RECOVERY.md](CRASH_RECOVERY.md) for full crash/recovery
+semantics, including the crash window between DB commit and Bukkit inventory
+mutation, duplicate delivery risk, and recovery procedures.
+
+### Staff/Admin Workflow
+
+1. **Review finalized** → Refund created automatically (if items are refundable)
+2. **Check refund status**: `/ec refund status <ref>` (requires `echoclaims.staff.refund.status`)
+3. **Execute refund**: `/ec refund execute <ref>` (requires `echoclaims.staff.refund.execute`)
+4. **View history**: `/ec refund history <ref>` (requires `echoclaims.staff.refund.history`)
+5. **Retry failed**: `/ec refund retry <ref>` (requires `echoclaims.staff.refund.retry`)
+6. **Player self-claim**: `/ec refund claim <ref>` (requires `echoclaims.refund.claim`)
+7. **View pending**: `/ec refund pending` (requires `echoclaims.refund.pending`)
+
+### Permissions
+
+| Permission | Description |
+|------------|-------------|
+| `echoclaims.staff.refund.status` | View refund status |
+| `echoclaims.staff.refund.execute` | Execute refund on behalf of player |
+| `echoclaims.staff.refund.history` | View refund audit history |
+| `echoclaims.staff.refund.retry` | Retry failed refund |
+| `echoclaims.refund.pending` | View own pending refunds |
+| `echoclaims.refund.claim` | Claim own refund (self-delivery) |
+| `echoclaims.admin` | All refund operations |
