@@ -75,6 +75,9 @@ class EchoClaimsCommandTest {
                 () -> null,
                 () -> null,
                 () -> null,
+                () -> null,
+                () -> null,
+                () -> null,
                 () -> io.github.skyblueheat.echoclaims.config.EchoClaimsSettings.defaults(),
                 queryExecutor,
                 runnable -> syncTasks.add(runnable),
@@ -274,7 +277,7 @@ class EchoClaimsCommandTest {
     @Test
     void tabCompleteWithNoPrefixReturnsAllSubcommands() {
         List<String> completions = command.onTabComplete(authorizedPlayer, null, "echoclaims", new String[]{""});
-        assertEquals(5, completions.size());
+        assertEquals(6, completions.size());
     }
 
     @Test

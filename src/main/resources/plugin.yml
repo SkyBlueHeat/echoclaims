@@ -8,7 +8,7 @@ load: POSTWORLD
 commands:
   echoclaims:
     description: EchoClaims administration and claim command
-    usage: /echoclaims <status|incidents|incident|snapshot|claim>
+    usage: /echoclaims <status|incidents|incident|snapshot|claim|review>
     aliases: [ec]
     permission: echoclaims.command.status
 permissions:
@@ -48,3 +48,42 @@ permissions:
   echoclaims.command.claim.staff.list:
     description: Allows staff to list claims for any player
     default: op
+  echoclaims.staff.review.queue:
+    description: Allows viewing the staff review queue
+    default: op
+  echoclaims.staff.review.view:
+    description: Allows viewing a claim review
+    default: op
+  echoclaims.staff.review.start:
+    description: Allows starting a review and taking ownership
+    default: op
+  echoclaims.staff.review.takeover:
+    description: Allows taking over an assigned review
+    default: op
+  echoclaims.staff.review.evidence:
+    description: Allows viewing evidence for a review
+    default: op
+  echoclaims.staff.review.note:
+    description: Allows adding internal staff notes
+    default: op
+  echoclaims.staff.review.request-info:
+    description: Allows requesting information from the claimant
+    default: op
+  echoclaims.staff.review.item-decision:
+    description: Allows creating and updating item-level decisions
+    default: op
+  echoclaims.staff.review.approve:
+    description: Allows approving a review
+    default: op
+  echoclaims.staff.review.partial:
+    description: Allows partially approving a review
+    default: op
+  echoclaims.staff.review.reject:
+    description: Allows rejecting a review
+    default: op
+  echoclaims.staff.review.history:
+    description: Allows viewing review history and audit trail
+    default: op
+  echoclaims.claim.respond:
+    description: Allows responding to a staff information request
+    default: true

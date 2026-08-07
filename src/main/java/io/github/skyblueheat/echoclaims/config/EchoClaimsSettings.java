@@ -2,6 +2,8 @@ package io.github.skyblueheat.echoclaims.config;
 
 import io.github.skyblueheat.echoclaims.domain.item.ItemScoreWeights;
 
+import io.github.skyblueheat.echoclaims.application.ReviewServiceConfig;
+
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Objects;
@@ -24,7 +26,21 @@ public record EchoClaimsSettings(
         Duration claimRateLimitCooldown,
         int claimMaxDescriptionLength,
         Duration claimSelectionSessionTtl,
-        int claimSelectionSessionMaxPlayers
+        int claimSelectionSessionMaxPlayers,
+        boolean reviewsEnabled,
+        Duration reviewEvidenceSessionTtl,
+        int reviewEvidenceSessionMaxStaff,
+        int reviewQueuePageSize,
+        int reviewMaxInternalNoteLength,
+        int reviewMaxQuestionLength,
+        int reviewMaxPlayerResponseLength,
+        int reviewMaxFinalSummaryLength,
+        int reviewMaxItemNoteLength,
+        int reviewMaxItemDecisionsPerClaim,
+        int reviewMaxActiveReviewsPerStaff,
+        Duration reviewPlayerResponseCooldown,
+        boolean reviewRequireAssignmentForMutations,
+        boolean reviewAllowPlayerCancelAfterReviewStart
 ) {
 
     public EchoClaimsSettings {
@@ -51,6 +67,21 @@ public record EchoClaimsSettings(
                 ? Duration.ofSeconds(120)
                 : claimSelectionSessionTtl;
         claimSelectionSessionMaxPlayers = Math.max(1, Math.min(claimSelectionSessionMaxPlayers, 1_000));
+        reviewEvidenceSessionTtl = reviewEvidenceSessionTtl == null
+                ? Duration.ofSeconds(300)
+                : reviewEvidenceSessionTtl;
+        reviewEvidenceSessionMaxStaff = Math.max(1, Math.min(reviewEvidenceSessionMaxStaff, 200));
+        reviewQueuePageSize = Math.max(1, Math.min(reviewQueuePageSize, 100));
+        reviewMaxInternalNoteLength = Math.max(1, Math.min(reviewMaxInternalNoteLength, 10_000));
+        reviewMaxQuestionLength = Math.max(1, Math.min(reviewMaxQuestionLength, 10_000));
+        reviewMaxPlayerResponseLength = Math.max(1, Math.min(reviewMaxPlayerResponseLength, 10_000));
+        reviewMaxFinalSummaryLength = Math.max(1, Math.min(reviewMaxFinalSummaryLength, 10_000));
+        reviewMaxItemNoteLength = Math.max(1, Math.min(reviewMaxItemNoteLength, 10_000));
+        reviewMaxItemDecisionsPerClaim = Math.max(1, Math.min(reviewMaxItemDecisionsPerClaim, 1_000));
+        reviewMaxActiveReviewsPerStaff = Math.max(0, Math.min(reviewMaxActiveReviewsPerStaff, 100));
+        reviewPlayerResponseCooldown = reviewPlayerResponseCooldown == null
+                ? Duration.ofSeconds(0)
+                : reviewPlayerResponseCooldown;
     }
 
     private static String validateSqliteFile(String value) {
@@ -83,6 +114,18 @@ public record EchoClaimsSettings(
 
     public static EchoClaimsSettings defaults() {
         return SettingsLoader.load(MapConfigurationSource.empty()).settings();
+    }
+
+    public ReviewServiceConfig reviewServiceConfig() {
+        return new ReviewServiceConfig(
+                reviewRequireAssignmentForMutations,
+                reviewMaxInternalNoteLength,
+                reviewMaxQuestionLength,
+                reviewMaxPlayerResponseLength,
+                reviewMaxFinalSummaryLength,
+                reviewMaxItemNoteLength,
+                reviewMaxItemDecisionsPerClaim
+        );
     }
 
     private static String normalizeLocale(String locale) {

@@ -210,6 +210,20 @@ public final class SqliteClaimStore implements ClaimStore {
         }
     }
 
+    @Override
+    public List<Claim> findClaimsByStatus(ClaimStatus status, int limit) throws SQLException {
+        Objects.requireNonNull(status, "status");
+        int safeLimit = Math.max(1, Math.min(limit, 100));
+        try (Connection connection = databaseManager.openConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "SELECT " + CLAIM_COLUMNS + " FROM claims "
+                             + "WHERE status = ? ORDER BY created_at ASC LIMIT ?")) {
+            statement.setString(1, status.name());
+            statement.setInt(2, safeLimit);
+            return readClaimList(statement);
+        }
+    }
+
     private static void insertClaimRow(Connection connection, Claim claim) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
                 "INSERT INTO claims (id, public_reference, incident_id, player_uuid, "

@@ -36,7 +36,13 @@ io.github.skyblueheat.echoclaims
 │   ├── ClaimLookupService  # Read-only claim queries
 │   ├── ClaimRateLimitService  # In-memory rate limiter with bounded memory
 │   ├── ClaimReferenceGenerator  # 8-char alphanumeric reference generator
-│   └── ClaimMetrics  # Thread-safe claim lifecycle counters
+│   ├── ClaimMetrics  # Thread-safe claim lifecycle counters
+│   ├── ReviewService  # Review lifecycle orchestration with atomic persistence
+│   ├── ReviewServiceConfig  # Immutable review limits and flags
+│   ├── ReviewTransitionPolicy  # Actor-aware review state machine
+│   ├── ReviewOutcomePolicy  # Derives/validates final outcomes from item decisions
+│   ├── ReviewEvidenceSelectionSession  # Per-staff, per-claim evidence selection
+│   └── ReviewMetrics  # Thread-safe review lifecycle counters
 ├── config/               # Configuration loading and validation
 │   ├── ConfigurationSource
 │   ├── MapConfigurationSource
@@ -47,6 +53,7 @@ io.github.skyblueheat.echoclaims
 ├── domain/               # Pure domain model (no Bukkit imports)
 │   ├── audit/            # AuditRecord
 │   ├── claim/            # Claim, ClaimStatus, ClaimSource, ClaimAuditEntry, ClaimActorType, ClaimAction
+│   ├── review/           # ClaimReview, ClaimReviewComment, ClaimReviewItemDecision, ReviewState, ReviewOutcome, ReviewItemOutcome, ReviewReasonCode, CommentType, CommentVisibility, ReviewTransitionPolicy, ReviewOutcomePolicy
 │   ├── content/          # ContentKey, IdentifiedContent, Capability, SemanticRole
 │   ├── incident/         # Incident, IncidentType, IncidentStatus
 │   ├── item/             # ItemDescriptor, ItemScore, ItemScoreWeights
@@ -71,7 +78,7 @@ io.github.skyblueheat.echoclaims
 ├── paper/                # Paper plugin layer
 │   ├── EchoClaimsPlugin  # Main plugin class
 │   ├── command/
-│   │   └── EchoClaimsCommand  # status, incidents, incident, snapshot, claim subcommands
+│   │   └── EchoClaimsCommand  # status, incidents, incident, snapshot, claim, review subcommands
 │   ├── config/
 │   │   └── BukkitConfigurationSource
 │   ├── listener/
@@ -93,6 +100,14 @@ io.github.skyblueheat.echoclaims
     ├── SqliteClaimAuditRepository
     ├── ClaimStore
     ├── SqliteClaimStore
+    ├── ClaimReviewRepository
+    ├── SqliteClaimReviewRepository
+    ├── ClaimReviewCommentRepository
+    ├── SqliteClaimReviewCommentRepository
+    ├── ClaimReviewItemDecisionRepository
+    ├── SqliteClaimReviewItemDecisionRepository
+    ├── ClaimReviewStore
+    ├── SqliteClaimReviewStore
     ├── MapCodec           # Map ↔ delimited string codec for SQLite text columns
     └── migration/
         ├── Migration
@@ -126,7 +141,7 @@ a configuration error.
 Schema migrations are versioned, forward-only, and applied in a transaction.
 The `schema_version` table records what was applied and when.
 
-## Database Schema (v4)
+## Database Schema (v5)
 
 - `schema_version` — migration tracking
 - `audit_records` — immutable audit log with category, source, details, and timestamp
@@ -136,6 +151,9 @@ The `schema_version` table records what was applied and when.
 - `claims` — player claim requests against incidents, with status lifecycle and audit
 - `claim_audit_entries` — immutable audit trail for every claim action
 - `idx_claims_active_unique` — partial unique index preventing duplicate active claims per (incident, player)
+- `claim_reviews` — staff reviews linked to claims, with state, outcome, reviewer, and version
+- `claim_review_comments` — append-only comments (internal notes, info requests, player responses, final summaries)
+- `claim_review_item_decisions` — per-evidence-item staff decisions with outcome, reason, and approved quantity
 
 ### Evidence capture flow
 
@@ -169,7 +187,32 @@ a 1-byte format version header. The maximum payload size is configurable
 
 Claims are created in DRAFT status by players. Players can submit (DRAFT →
 SUBMITTED) or cancel (DRAFT/SUBMITTED → CANCELLED). CANCELLED is terminal.
-See [CLAIM_LIFECYCLE.md](CLAIM_LIFECYCLE.md) for the full state diagram.
+Staff can start a review (SUBMITTED → UNDER_REVIEW), request information
+(UNDER_REVIEW → WAITING_FOR_PLAYER), and finalize with an outcome
+(APPROVED, PARTIALLY_APPROVED, REJECTED). See
+[CLAIM_LIFECYCLE.md](CLAIM_LIFECYCLE.md) for the full state diagram.
+
+### Review system
+
+The review system allows staff to review submitted claims, examine evidence,
+make per-item decisions, and finalize with an outcome. Key design points:
+
+- **Assigned-reviewer enforcement**: when `require-assignment-for-mutations`
+  is true, only the assigned reviewer can add notes, request information,
+  create/update item decisions, and finalize the review.
+- **Takeover requires a reason**: staff must provide a non-blank reason when
+  taking over a review from another staff member.
+- **REJECTED requires a summary**: finalizing with REJECTED outcome requires
+  a non-blank final summary for auditability.
+- **OTHER reason requires a note**: item decisions with `ReviewReasonCode.OTHER`
+  must include a non-blank staff note.
+- **Evidence selection sessions are claim-bound**: each staff member's evidence
+  selection session is keyed by (staffUuid, claimId) to prevent index confusion.
+- **Atomic multi-table persistence**: `SqliteClaimReviewStore` executes all
+  SQL statements for a review operation in a single transaction with
+  optimistic concurrency control on both the review and claim versions.
+- **Comment visibility**: internal notes are only visible to staff; information
+  requests, player responses, and final summaries are visible to claim participants.
 
 ### Claim atomicity and concurrency
 
@@ -185,6 +228,7 @@ The following packages are now populated:
 - `domain/incident` — `Incident`, `IncidentType`, `IncidentStatus`
 - `domain/snapshot` — `InventorySnapshot`, `SnapshotItem`, `CaptureReason`, `Coordinates`
 - `domain/claim` — `Claim`, `ClaimStatus`, `ClaimSource`, `ClaimAuditEntry`, `ClaimActorType`, `ClaimAction`
+- `domain/review` — `ClaimReview`, `ClaimReviewComment`, `ClaimReviewItemDecision`, `ReviewState`, `ReviewOutcome`, `ReviewItemOutcome`, `ReviewReasonCode`, `CommentType`, `CommentVisibility`, `ReviewTransitionPolicy`, `ReviewOutcomePolicy`
 
 The following remain reserved for future sprints:
 

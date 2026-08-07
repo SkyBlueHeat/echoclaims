@@ -63,6 +63,10 @@ public final class ClaimLookupService {
         return claimStore.countAuditEntries();
     }
 
+    public List<Claim> findClaimsByStatus(ClaimStatus status) throws SQLException {
+        return claimStore.findClaimsByStatus(status, maxRecentResults);
+    }
+
     public int maxRecentResults() {
         return maxRecentResults;
     }

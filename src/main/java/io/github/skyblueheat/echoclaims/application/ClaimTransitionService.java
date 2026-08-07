@@ -45,12 +45,23 @@ public final class ClaimTransitionService {
             UUID actorUuid,
             String reason
     ) {
+        return transition(claim, target, ClaimActorType.PLAYER, actorUuid, reason);
+    }
+
+    public TransitionResult transition(
+            Claim claim,
+            ClaimStatus target,
+            ClaimActorType actorType,
+            UUID actorUuid,
+            String reason
+    ) {
         Objects.requireNonNull(claim, "claim");
         Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(actorType, "actorType");
         Objects.requireNonNull(actorUuid, "actorUuid");
 
         ClaimTransitionPolicy.TransitionResult policyResult =
-                ClaimTransitionPolicy.evaluate(claim, target);
+                ClaimTransitionPolicy.evaluate(claim, target, actorType);
 
         if (!policyResult.isAllowed()) {
             metrics.recordClaimRejected();
@@ -67,7 +78,7 @@ public final class ClaimTransitionService {
         ClaimAuditEntry auditEntry = new ClaimAuditEntry(
                 UUID.randomUUID(),
                 claim.id(),
-                ClaimActorType.PLAYER,
+                actorType,
                 actorUuid,
                 action,
                 reason == null ? "" : reason,

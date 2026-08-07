@@ -8,10 +8,12 @@ EchoClaims is an early-stage commercial Paper plugin foundation. It captures,
 stores, and retrieves server-side evidence so administrators can resolve
 lost-item disputes without relying on player-submitted screenshots.
 
-> **Status:** Claim foundation (MVP-02) implemented.
+> **Status:** Staff Review System (MVP-03) implemented.
 > Player death evidence is captured, persisted, and queryable via admin commands.
 > Players can create, submit, and cancel claims against incidents.
-> Staff can view and list claims. Refund, approval, and GUI workflows are not yet implemented.
+> Staff can review submitted claims, examine evidence, make per-item decisions,
+> request information from players, and finalize reviews with outcomes (APPROVED,
+> PARTIALLY_APPROVED, REJECTED). Refund and GUI workflows are not yet implemented.
 > See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the current state.
 
 ## Requirements
@@ -75,6 +77,19 @@ and push to `main`. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 | `/echoclaims claim cancel <ref>` | `/ec claim cancel <ref>` | `echoclaims.command.claim.cancel` | Cancels a DRAFT or SUBMITTED claim. |
 | `/echoclaims claim staff-view <ref>` | `/ec claim staff-view <ref>` | `echoclaims.command.claim.staff.view` | Staff: view any claim by reference. |
 | `/echoclaims claim staff-list <player>` | `/ec claim staff-list <player>` | `echoclaims.command.claim.staff.list` | Staff: list claims for a player. |
+| `/echoclaims claim respond <ref> <message>` | `/ec claim respond <ref> <message>` | `echoclaims.claim.respond` | Player: respond to a staff information request. |
+| `/echoclaims review queue` | `/ec review queue` | `echoclaims.staff.review.queue` | Staff: view the review queue of submitted claims. |
+| `/echoclaims review view <ref>` | `/ec review view <ref>` | `echoclaims.staff.review.view` | Staff: view a claim review. |
+| `/echoclaims review start <ref>` | `/ec review start <ref>` | `echoclaims.staff.review.start` | Staff: start a review and take ownership. |
+| `/echoclaims review takeover <ref> <reason>` | `/ec review takeover <ref> <reason>` | `echoclaims.staff.review.takeover` | Staff: take over a review from another staff member. |
+| `/echoclaims review evidence <ref> [index]` | `/ec review evidence <ref> [index]` | `echoclaims.staff.review.evidence` | Staff: view evidence for a review. |
+| `/echoclaims review note <ref> <note>` | `/ec review note <ref> <note>` | `echoclaims.staff.review.note` | Staff: add an internal note to a review. |
+| `/echoclaims review request-info <ref> <question>` | `/ec review request-info <ref> <question>` | `echoclaims.staff.review.request-info` | Staff: request information from the claimant. |
+| `/echoclaims review item <ref> <index> <outcome> <reason> [note]` | `/ec review item <ref> ...` | `echoclaims.staff.review.item-decision` | Staff: create or update an item-level decision. |
+| `/echoclaims review approve <ref> [summary]` | `/ec review approve <ref> [summary]` | `echoclaims.staff.review.approve` | Staff: finalize a review as APPROVED. |
+| `/echoclaims review partial <ref> [summary]` | `/ec review partial <ref> [summary]` | `echoclaims.staff.review.partial` | Staff: finalize a review as PARTIALLY_APPROVED. |
+| `/echoclaims review reject <ref> <summary>` | `/ec review reject <ref> <summary>` | `echoclaims.staff.review.reject` | Staff: finalize a review as REJECTED (summary required). |
+| `/echoclaims review history <ref>` | `/ec review history <ref>` | `echoclaims.staff.review.history` | Staff: view review history and audit trail. |
 
 ## Permissions
 
@@ -92,6 +107,19 @@ and push to `main`. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 | `echoclaims.command.claim.submit` | op | Access to `/echoclaims claim submit`. |
 | `echoclaims.command.claim.staff.view` | op | Staff: view any claim. |
 | `echoclaims.command.claim.staff.list` | op | Staff: list claims for a player. |
+| `echoclaims.claim.respond` | true | Player: respond to staff information requests. |
+| `echoclaims.staff.review.queue` | op | Staff: view the review queue. |
+| `echoclaims.staff.review.view` | op | Staff: view a claim review. |
+| `echoclaims.staff.review.start` | op | Staff: start a review. |
+| `echoclaims.staff.review.takeover` | op | Staff: take over a review. |
+| `echoclaims.staff.review.evidence` | op | Staff: view evidence for a review. |
+| `echoclaims.staff.review.note` | op | Staff: add internal notes. |
+| `echoclaims.staff.review.request-info` | op | Staff: request information from the claimant. |
+| `echoclaims.staff.review.item-decision` | op | Staff: create/update item-level decisions. |
+| `echoclaims.staff.review.approve` | op | Staff: finalize as APPROVED. |
+| `echoclaims.staff.review.partial` | op | Staff: finalize as PARTIALLY_APPROVED. |
+| `echoclaims.staff.review.reject` | op | Staff: finalize as REJECTED. |
+| `echoclaims.staff.review.history` | op | Staff: view review history and audit trail. |
 
 ## Configuration
 

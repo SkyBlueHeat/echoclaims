@@ -183,6 +183,106 @@ public final class SchemaMigrator {
                     ON claims(incident_id, player_uuid)
                     WHERE status IN ('DRAFT', 'SUBMITTED')
                     """
+            )),
+            new Migration(5, "review foundation: claim reviews, comments, and item decisions", List.of(
+                    """
+                    CREATE TABLE IF NOT EXISTS claim_reviews (
+                        id TEXT PRIMARY KEY,
+                        claim_id TEXT NOT NULL,
+                        assigned_reviewer_uuid TEXT NOT NULL,
+                        review_state TEXT NOT NULL DEFAULT 'OPEN',
+                        final_outcome TEXT,
+                        final_summary TEXT NOT NULL DEFAULT '',
+                        started_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        finalized_at INTEGER NOT NULL DEFAULT 0,
+                        version INTEGER NOT NULL DEFAULT 0,
+                        metadata TEXT NOT NULL DEFAULT '',
+                        FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE RESTRICT,
+                        UNIQUE(claim_id)
+                    )
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_claim_reviews_claim_id
+                    ON claim_reviews(claim_id)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_claim_reviews_reviewer
+                    ON claim_reviews(assigned_reviewer_uuid)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_claim_reviews_state
+                    ON claim_reviews(review_state)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_claim_reviews_finalized_at
+                    ON claim_reviews(finalized_at DESC)
+                    """,
+                    """
+                    CREATE TABLE IF NOT EXISTS claim_review_comments (
+                        id TEXT PRIMARY KEY,
+                        review_id TEXT NOT NULL,
+                        claim_id TEXT NOT NULL,
+                        actor_uuid TEXT NOT NULL,
+                        actor_type TEXT NOT NULL,
+                        visibility TEXT NOT NULL,
+                        comment_type TEXT NOT NULL,
+                        body TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        metadata TEXT NOT NULL DEFAULT '',
+                        FOREIGN KEY (review_id) REFERENCES claim_reviews(id) ON DELETE RESTRICT,
+                        FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE RESTRICT
+                    )
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_review_comments_claim_id
+                    ON claim_review_comments(claim_id)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_review_comments_review_id
+                    ON claim_review_comments(review_id)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_review_comments_claim_created
+                    ON claim_review_comments(claim_id, created_at ASC)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_review_comments_visibility
+                    ON claim_review_comments(visibility)
+                    """,
+                    """
+                    CREATE TABLE IF NOT EXISTS claim_review_item_decisions (
+                        id TEXT PRIMARY KEY,
+                        review_id TEXT NOT NULL,
+                        claim_id TEXT NOT NULL,
+                        evidence_item_reference TEXT NOT NULL,
+                        source_snapshot_id TEXT NOT NULL,
+                        original_quantity INTEGER NOT NULL,
+                        approved_quantity INTEGER NOT NULL,
+                        outcome TEXT NOT NULL,
+                        reason_code TEXT NOT NULL,
+                        staff_note TEXT NOT NULL DEFAULT '',
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        version INTEGER NOT NULL DEFAULT 0,
+                        metadata TEXT NOT NULL DEFAULT '',
+                        FOREIGN KEY (review_id) REFERENCES claim_reviews(id) ON DELETE RESTRICT,
+                        FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE RESTRICT,
+                        UNIQUE(review_id, evidence_item_reference)
+                    )
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_review_decisions_review_id
+                    ON claim_review_item_decisions(review_id)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_review_decisions_claim_id
+                    ON claim_review_item_decisions(claim_id)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_review_decisions_evidence_ref
+                    ON claim_review_item_decisions(evidence_item_reference)
+                    """
             ))
     );
 

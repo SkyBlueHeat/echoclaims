@@ -118,4 +118,13 @@ public interface ClaimStore {
      * @throws SQLException if the query fails
      */
     long countAuditEntries() throws SQLException;
+
+    /**
+     * Finds claims by status, ordered by creation time ascending.
+     *
+     * <p>Used for the staff review queue to list submitted claims.</p>
+     *
+     * @throws SQLException if the query fails
+     */
+    List<Claim> findClaimsByStatus(ClaimStatus status, int limit) throws SQLException;
 }

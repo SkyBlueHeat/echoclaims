@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.1.0-SNAPSHOT] - 2025-08-03
 
+### MVP-03: Staff Review System
+
+### Added
+- Review domain model: `ClaimReview`, `ClaimReviewComment`,
+  `ClaimReviewItemDecision`, `ReviewState` (OPEN, FINALIZED),
+  `ReviewOutcome` (APPROVED, PARTIALLY_APPROVED, REJECTED),
+  `ReviewItemOutcome`, `ReviewReasonCode`, `CommentType`, `CommentVisibility`
+- Extended `ClaimStatus` with UNDER_REVIEW, WAITING_FOR_PLAYER, APPROVED,
+  PARTIALLY_APPROVED, REJECTED
+- Extended `ClaimAction` with REVIEW_STARTED, REVIEW_TAKEN_OVER,
+  INTERNAL_NOTE_ADDED, INFORMATION_REQUESTED, PLAYER_RESPONDED,
+  ITEM_DECISION_CREATED, ITEM_DECISION_UPDATED, REVIEW_APPROVED,
+  REVIEW_PARTIALLY_APPROVED, REVIEW_REJECTED
+- Schema migration v5: `claim_reviews`, `claim_review_comments`,
+  `claim_review_item_decisions` tables with indexes, foreign keys, and
+  uniqueness constraints
+- Repository interfaces and SQLite implementations:
+  - `ClaimReviewRepository` / `SqliteClaimReviewRepository`
+  - `ClaimReviewCommentRepository` / `SqliteClaimReviewCommentRepository`
+  - `ClaimReviewItemDecisionRepository` / `SqliteClaimReviewItemDecisionRepository`
+- `ClaimReviewStore` interface and `SqliteClaimReviewStore` with atomic
+  multi-table transactions and optimistic concurrency control
+- `ReviewTransitionPolicy` — actor-aware state machine for review transitions
+- `ReviewOutcomePolicy` — derives and validates final outcomes from item decisions
+- `ReviewService` — orchestrates review lifecycle with config-driven limits,
+  assigned-reviewer enforcement, takeover reason validation, and audit trail
+- `ReviewServiceConfig` — immutable config record for review limits and flags
+- `ReviewEvidenceSelectionSession` — per-staff, per-claim evidence selection
+  with TTL expiration and bounded staff count
+- `ReviewMetrics` — thread-safe counters for review lifecycle events
+- Review commands: `/ec review queue`, `view`, `start`, `takeover`, `evidence`,
+  `note`, `request-info`, `item`, `approve`, `partial`, `reject`, `history`
+- Player response command: `/ec claim respond`
+- Review configuration: `reviews.enabled`, `reviews.evidence-session-ttl-seconds`,
+  `reviews.evidence-session-max-staff`, `reviews.queue-page-size`,
+  `reviews.max-internal-note-length`, `reviews.max-question-length`,
+  `reviews.max-player-response-length`, `reviews.max-final-summary-length`,
+  `reviews.max-item-note-length`, `reviews.max-item-decisions-per-claim`,
+  `reviews.max-active-reviews-per-staff`, `reviews.player-response-cooldown-seconds`,
+  `reviews.require-assignment-for-mutations`,
+  `reviews.allow-player-cancel-after-review-start`
+- New permissions: `echoclaims.staff.review.queue`, `.view`, `.start`,
+  `.takeover`, `.evidence`, `.note`, `.request-info`, `.item-decision`,
+  `.approve`, `.partial`, `.reject`, `.history`, `echoclaims.claim.respond`
+- Message keys for review commands (en, tr)
+- Tests for review domain models, policies, migration v5, persistence,
+  atomicity, concurrency, authorization, commands, and configuration
+
 ### MVP-02: Claim Foundation
 
 ### Added

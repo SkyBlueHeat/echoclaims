@@ -81,3 +81,37 @@ claims:
   selection-session-ttl-seconds: 120
   # Maximum number of players tracked simultaneously in selection sessions.
   selection-session-max-players: 100
+
+reviews:
+  # Enable or disable the staff review system entirely.
+  enabled: true
+  # Time-to-live in seconds for the evidence selection session created by /ec review evidence.
+  # The session binds displayed indices to exact evidence item references so an index never
+  # silently resolves to a different item.
+  evidence-session-ttl-seconds: 300
+  # Maximum number of staff members tracked simultaneously in evidence selection sessions.
+  evidence-session-max-staff: 50
+  # Maximum number of claims returned per page in the review queue.
+  queue-page-size: 20
+  # Maximum character length for internal staff notes.
+  max-internal-note-length: 1000
+  # Maximum character length for information requests sent to players.
+  max-question-length: 1000
+  # Maximum character length for player responses.
+  max-player-response-length: 1000
+  # Maximum character length for final review summaries.
+  max-final-summary-length: 2000
+  # Maximum character length for item decision staff notes.
+  max-item-note-length: 500
+  # Maximum number of item decisions allowed per claim review.
+  max-item-decisions-per-claim: 100
+  # Maximum number of active (OPEN) reviews a single staff member can be assigned to.
+  # Set to 0 to disable the limit.
+  max-active-reviews-per-staff: 5
+  # Cooldown in seconds between player responses on the same claim. Set to 0 to disable.
+  player-response-cooldown-seconds: 0
+  # When true, only the assigned reviewer can add notes, request information,
+  # create/update item decisions, and finalize the review.
+  require-assignment-for-mutations: true
+  # When false, players cannot cancel a claim once it is UNDER_REVIEW or WAITING_FOR_PLAYER.
+  allow-player-cancel-after-review-start: false

@@ -11,6 +11,9 @@ import io.github.skyblueheat.echoclaims.application.EvidenceLookupService;
 import io.github.skyblueheat.echoclaims.application.EvidenceMetrics;
 import io.github.skyblueheat.echoclaims.application.EvidencePersistenceService;
 import io.github.skyblueheat.echoclaims.application.ItemValueScorer;
+import io.github.skyblueheat.echoclaims.application.ReviewEvidenceSelectionSession;
+import io.github.skyblueheat.echoclaims.application.ReviewMetrics;
+import io.github.skyblueheat.echoclaims.application.ReviewService;
 import io.github.skyblueheat.echoclaims.application.StatusService;
 import io.github.skyblueheat.echoclaims.config.EchoClaimsSettings;
 import io.github.skyblueheat.echoclaims.config.SettingsLoadResult;
@@ -27,12 +30,20 @@ import io.github.skyblueheat.echoclaims.paper.message.MessageService;
 import io.github.skyblueheat.echoclaims.paper.message.PaperMessageService;
 import io.github.skyblueheat.echoclaims.persistence.AuditRecordRepository;
 import io.github.skyblueheat.echoclaims.persistence.AuditWriteQueue;
+import io.github.skyblueheat.echoclaims.persistence.ClaimReviewCommentRepository;
+import io.github.skyblueheat.echoclaims.persistence.ClaimReviewItemDecisionRepository;
+import io.github.skyblueheat.echoclaims.persistence.ClaimReviewRepository;
+import io.github.skyblueheat.echoclaims.persistence.ClaimReviewStore;
 import io.github.skyblueheat.echoclaims.persistence.ClaimStore;
 import io.github.skyblueheat.echoclaims.persistence.DatabaseManager;
 import io.github.skyblueheat.echoclaims.persistence.EvidenceStore;
 import io.github.skyblueheat.echoclaims.persistence.IncidentRepository;
 import io.github.skyblueheat.echoclaims.persistence.InventorySnapshotRepository;
 import io.github.skyblueheat.echoclaims.persistence.SqliteAuditRecordRepository;
+import io.github.skyblueheat.echoclaims.persistence.SqliteClaimReviewCommentRepository;
+import io.github.skyblueheat.echoclaims.persistence.SqliteClaimReviewItemDecisionRepository;
+import io.github.skyblueheat.echoclaims.persistence.SqliteClaimReviewRepository;
+import io.github.skyblueheat.echoclaims.persistence.SqliteClaimReviewStore;
 import io.github.skyblueheat.echoclaims.persistence.SqliteClaimStore;
 import io.github.skyblueheat.echoclaims.persistence.SqliteEvidenceStore;
 import io.github.skyblueheat.echoclaims.persistence.SqliteIncidentRepository;
@@ -64,6 +75,9 @@ public final class EchoClaimsPlugin extends JavaPlugin {
     private volatile ClaimTransitionService claimTransitionService;
     private volatile ClaimRateLimitService claimRateLimitService;
     private volatile IncidentSelectionSession incidentSelectionSession;
+    private volatile ReviewService reviewService;
+    private volatile ReviewEvidenceSelectionSession reviewEvidenceSession;
+    private volatile ReviewMetrics reviewMetrics;
 
     private IntegrationRegistry integrations;
     private DatabaseManager databaseManager;
@@ -114,6 +128,10 @@ public final class EchoClaimsPlugin extends JavaPlugin {
 
         if (incidentSelectionSession != null) {
             incidentSelectionSession.clearAll();
+        }
+
+        if (reviewEvidenceSession != null) {
+            reviewEvidenceSession.clearAll();
         }
 
         if (evidenceService != null) {
@@ -250,6 +268,19 @@ public final class EchoClaimsPlugin extends JavaPlugin {
                 claimStore, claimReferenceGenerator, claimMetrics);
         claimTransitionService = new ClaimTransitionService(claimStore, claimMetrics);
 
+        ClaimReviewRepository reviewRepository = new SqliteClaimReviewRepository(databaseManager);
+        ClaimReviewCommentRepository commentRepository = new SqliteClaimReviewCommentRepository(databaseManager);
+        ClaimReviewItemDecisionRepository decisionRepository = new SqliteClaimReviewItemDecisionRepository(databaseManager);
+        ClaimReviewStore reviewStore = new SqliteClaimReviewStore(databaseManager);
+        reviewMetrics = new ReviewMetrics();
+        reviewService = new ReviewService(
+                reviewRepository, commentRepository, decisionRepository, reviewStore, reviewMetrics,
+                settings.reviewServiceConfig());
+        reviewEvidenceSession = new ReviewEvidenceSelectionSession(
+                settings.reviewEvidenceSessionTtl(),
+                settings.reviewEvidenceSessionMaxStaff()
+        );
+
         statusService = new StatusService(
                 () -> settings,
                 databaseManager,
@@ -291,6 +322,9 @@ public final class EchoClaimsPlugin extends JavaPlugin {
                 () -> claimTransitionService,
                 () -> claimRateLimitService,
                 () -> incidentSelectionSession,
+                () -> reviewService,
+                () -> reviewEvidenceSession,
+                () -> reviewMetrics,
                 () -> settings,
                 queryExecutor,
                 runnable -> getServer().getScheduler().runTask(this, runnable),

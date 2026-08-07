@@ -65,11 +65,39 @@ public record Claim(
         return status == ClaimStatus.SUBMITTED;
     }
 
+    public boolean isUnderReview() {
+        return status == ClaimStatus.UNDER_REVIEW;
+    }
+
+    public boolean isWaitingForPlayer() {
+        return status == ClaimStatus.WAITING_FOR_PLAYER;
+    }
+
+    public boolean isApproved() {
+        return status == ClaimStatus.APPROVED;
+    }
+
+    public boolean isPartiallyApproved() {
+        return status == ClaimStatus.PARTIALLY_APPROVED;
+    }
+
+    public boolean isRejected() {
+        return status == ClaimStatus.REJECTED;
+    }
+
     public boolean isCancelled() {
         return status == ClaimStatus.CANCELLED;
     }
 
+    public boolean isTerminal() {
+        return status.isTerminal();
+    }
+
     public boolean isOpen() {
+        return status == ClaimStatus.DRAFT || status == ClaimStatus.SUBMITTED;
+    }
+
+    public boolean isCancellableByPlayer() {
         return status == ClaimStatus.DRAFT || status == ClaimStatus.SUBMITTED;
     }
 

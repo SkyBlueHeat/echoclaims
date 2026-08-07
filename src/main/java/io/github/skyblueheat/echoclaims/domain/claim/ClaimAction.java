@@ -4,11 +4,21 @@ package io.github.skyblueheat.echoclaims.domain.claim;
  * The kind of action recorded in a {@link ClaimAuditEntry}.
  *
  * <p>Each value corresponds to a lifecycle event in the claim state machine.
- * Future sprints may add {@code APPROVED}, {@code REJECTED}, {@code REFUNDED},
- * but those are intentionally excluded from MVP-02.</p>
+ * Refund and delivery actions are reserved for future sprints and are
+ * intentionally excluded.</p>
  */
 public enum ClaimAction {
     CREATED,
     SUBMITTED,
-    CANCELLED
+    CANCELLED,
+    REVIEW_STARTED,
+    REVIEW_TAKEN_OVER,
+    INTERNAL_NOTE_ADDED,
+    INFORMATION_REQUESTED,
+    PLAYER_RESPONDED,
+    ITEM_DECISION_CREATED,
+    ITEM_DECISION_UPDATED,
+    REVIEW_APPROVED,
+    REVIEW_PARTIALLY_APPROVED,
+    REVIEW_REJECTED
 }

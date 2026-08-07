@@ -52,7 +52,25 @@ public final class SettingsLoader {
                 Duration.ofSeconds(
                         integer(source, warnings, "claims.selection-session-ttl-seconds", 120, 10, 3_600)
                 ),
-                integer(source, warnings, "claims.selection-session-max-players", 100, 1, 1_000)
+                integer(source, warnings, "claims.selection-session-max-players", 100, 1, 1_000),
+                bool(source, warnings, "reviews.enabled", true),
+                Duration.ofSeconds(
+                        integer(source, warnings, "reviews.evidence-session-ttl-seconds", 300, 10, 3_600)
+                ),
+                integer(source, warnings, "reviews.evidence-session-max-staff", 50, 1, 200),
+                integer(source, warnings, "reviews.queue-page-size", 20, 1, 100),
+                integer(source, warnings, "reviews.max-internal-note-length", 1_000, 1, 10_000),
+                integer(source, warnings, "reviews.max-question-length", 1_000, 1, 10_000),
+                integer(source, warnings, "reviews.max-player-response-length", 1_000, 1, 10_000),
+                integer(source, warnings, "reviews.max-final-summary-length", 2_000, 1, 10_000),
+                integer(source, warnings, "reviews.max-item-note-length", 500, 1, 10_000),
+                integer(source, warnings, "reviews.max-item-decisions-per-claim", 100, 1, 1_000),
+                integer(source, warnings, "reviews.max-active-reviews-per-staff", 5, 0, 100),
+                Duration.ofSeconds(
+                        integer(source, warnings, "reviews.player-response-cooldown-seconds", 0, 0, 3_600)
+                ),
+                bool(source, warnings, "reviews.require-assignment-for-mutations", true),
+                bool(source, warnings, "reviews.allow-player-cancel-after-review-start", false)
         );
 
         return new SettingsLoadResult(settings, warnings);
