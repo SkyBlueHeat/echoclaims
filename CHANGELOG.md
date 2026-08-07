@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.1.0-SNAPSHOT] - 2025-08-03
 
+### MVP-04: Refund System
+
+### Added
+- Refund domain model: `Refund`, `RefundItem`, `RefundAuditEntry`,
+  `RefundStatus` (PENDING, READY, DELIVERING, COMPLETED, FAILED),
+  `RefundItemStatus` (PENDING, PARTIALLY_DELIVERED, DELIVERED, FAILED),
+  `RefundAction`
+- `RefundDeliveryAdapter` interface for provider-neutral inventory insertion
+  with `ItemDeliveryResult` (success, partial, failure)
+- `RefundService` — orchestrates refund creation, execution, retry, and
+  completion with optimistic concurrency control
+- `RefundServiceConfig` — immutable config record for refund settings
+- Schema migration v6: `refunds`, `refund_items`, `refund_audit_entries`
+  tables with indexes, foreign keys, and optimistic concurrency support
+- Repository interfaces and SQLite implementations:
+  - `RefundRepository` / `SqliteRefundRepository`
+  - `RefundItemRepository` / `SqliteRefundItemRepository`
+  - `RefundAuditRepository` / `SqliteRefundAuditRepository`
+  - `RefundStore` / `SqliteRefundStore` with atomic multi-table transactions
+- `RefundCommandHandler` — delegate for `/ec refund` subcommands:
+  `status`, `execute`, `history`, `retry`, `pending`, `claim`
+- Refund configuration: `refunds.enabled`, `refunds.player-self-claim`,
+  `refunds.auto-deliver-on-login`, `refunds.max-items-per-execution`,
+  `refunds.retry-failed-refunds`
+- New permissions: `echoclaims.staff.refund.status`, `.execute`, `.history`,
+  `.retry`, `echoclaims.refund.pending`, `.claim`
+- Message keys for refund commands (en, tr)
+- `RefundStatus.isTerminal()` — COMPLETED is terminal; FAILED is recoverable
+- SQL-level guard preventing re-completion of COMPLETED refunds
+- Partial delivery support: items can be partially delivered when inventory
+  is full, with automatic retry on subsequent execution
+- Documentation: [docs/CRASH_RECOVERY.md](docs/CRASH_RECOVERY.md)
+- Tests:
+  - Concurrency test matrix (8 scenarios) — `RefundStoreConcurrencyTest`
+  - Atomicity failure injection tests (7 scenarios) — `RefundStoreAtomicityTest`
+  - Partial delivery correctness tests — `RefundServiceTest`
+  - Paper inventory delivery test matrix (7 scenarios) — `RefundServiceTest`
+  - Command and authorization tests (23 scenarios) — `RefundCommandHandlerTest`
+  - Domain/refund creation rule tests (7 scenarios) — `RefundCreationRuleTest`
+  - Refund aggregate completion tests (5 combinations) — `RefundCreationRuleTest`
+  - ItemStack round-trip tests (14 scenarios) — `BukkitItemSerializerTest`
+  - Runtime validation: golden path, partial delivery, inventory capacity,
+    restart persistence — `RuntimeValidationPlugin`
+
+### Fixed
+- `RefundStatus.isTerminal()` now returns `true` only for `COMPLETED`,
+  not for `FAILED` (FAILED is recoverable via retry)
+- `updateRefundStatus` SQL now includes `AND status != 'COMPLETED'` guard
+  to prevent re-completion race conditions
+
 ### MVP-03: Staff Review System
 
 ### Added

@@ -70,7 +70,12 @@ public final class SettingsLoader {
                         integer(source, warnings, "reviews.player-response-cooldown-seconds", 0, 0, 3_600)
                 ),
                 bool(source, warnings, "reviews.require-assignment-for-mutations", true),
-                bool(source, warnings, "reviews.allow-player-cancel-after-review-start", false)
+                bool(source, warnings, "reviews.allow-player-cancel-after-review-start", false),
+                bool(source, warnings, "refunds.enabled", true),
+                bool(source, warnings, "refunds.player-self-claim", true),
+                bool(source, warnings, "refunds.auto-deliver-on-login", false),
+                integer(source, warnings, "refunds.max-items-per-execution", 100, 1, 1_000),
+                bool(source, warnings, "refunds.retry-failed-refunds", true)
         );
 
         return new SettingsLoadResult(settings, warnings);

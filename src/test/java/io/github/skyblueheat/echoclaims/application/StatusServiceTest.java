@@ -54,7 +54,7 @@ class StatusServiceTest {
         assertEquals("0.1.0-SNAPSHOT", report.version());
         assertEquals("en", report.locale());
         assertTrue(report.databaseAvailable());
-        assertEquals(5, report.schemaVersion());
+        assertEquals(6, report.schemaVersion());
         assertEquals(0, report.pendingWrites());
         assertEquals(0, report.writtenCount());
         assertEquals(0, report.failedCount());

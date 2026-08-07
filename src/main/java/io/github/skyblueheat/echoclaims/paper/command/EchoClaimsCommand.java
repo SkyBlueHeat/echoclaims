@@ -7,6 +7,8 @@ import io.github.skyblueheat.echoclaims.application.ClaimRateLimitService;
 import io.github.skyblueheat.echoclaims.application.ClaimTransitionService;
 import io.github.skyblueheat.echoclaims.application.EvidenceLookupService;
 import io.github.skyblueheat.echoclaims.application.IncidentSelectionSession;
+import io.github.skyblueheat.echoclaims.application.RefundDeliveryAdapter;
+import io.github.skyblueheat.echoclaims.application.RefundService;
 import io.github.skyblueheat.echoclaims.application.ReviewEvidenceSelectionSession;
 import io.github.skyblueheat.echoclaims.application.ReviewMetrics;
 import io.github.skyblueheat.echoclaims.application.ReviewService;
@@ -78,7 +80,7 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
 
     private static final List<String> SUBCOMMANDS =
             List.of("status", "incidents", "incident", "snapshot",
-                    "claim", "review");
+                    "claim", "review", "refund");
 
     private static final List<String> CLAIM_SUBCOMMANDS =
             List.of("list", "view", "create", "cancel", "submit", "claimable", "respond");
@@ -103,10 +105,13 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
     private final Supplier<ReviewService> reviewServiceSupplier;
     private final Supplier<ReviewEvidenceSelectionSession> reviewEvidenceSessionSupplier;
     private final Supplier<ReviewMetrics> reviewMetricsSupplier;
+    private final Supplier<RefundService> refundServiceSupplier;
+    private final Supplier<RefundDeliveryAdapter> refundDeliveryAdapterSupplier;
     private final Supplier<EchoClaimsSettings> settingsSupplier;
     private final ExecutorService queryExecutor;
     private final Consumer<Runnable> syncScheduler;
     private final Logger logger;
+    private RefundCommandHandler refundCommandHandler;
 
     public EchoClaimsCommand(
             Plugin plugin,
@@ -121,6 +126,8 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
             Supplier<ReviewService> reviewServiceSupplier,
             Supplier<ReviewEvidenceSelectionSession> reviewEvidenceSessionSupplier,
             Supplier<ReviewMetrics> reviewMetricsSupplier,
+            Supplier<RefundService> refundServiceSupplier,
+            Supplier<RefundDeliveryAdapter> refundDeliveryAdapterSupplier,
             Supplier<EchoClaimsSettings> settingsSupplier,
             ExecutorService queryExecutor,
             Consumer<Runnable> syncScheduler,
@@ -138,10 +145,16 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
         this.reviewServiceSupplier = Objects.requireNonNull(reviewServiceSupplier, "reviewServiceSupplier");
         this.reviewEvidenceSessionSupplier = Objects.requireNonNull(reviewEvidenceSessionSupplier, "reviewEvidenceSessionSupplier");
         this.reviewMetricsSupplier = Objects.requireNonNull(reviewMetricsSupplier, "reviewMetricsSupplier");
+        this.refundServiceSupplier = Objects.requireNonNull(refundServiceSupplier, "refundServiceSupplier");
+        this.refundDeliveryAdapterSupplier = Objects.requireNonNull(refundDeliveryAdapterSupplier, "refundDeliveryAdapterSupplier");
         this.settingsSupplier = Objects.requireNonNull(settingsSupplier, "settingsSupplier");
         this.queryExecutor = Objects.requireNonNull(queryExecutor, "queryExecutor");
         this.syncScheduler = Objects.requireNonNull(syncScheduler, "syncScheduler");
         this.logger = Objects.requireNonNull(logger, "logger");
+        this.refundCommandHandler = new RefundCommandHandler(
+                messageSupplier, refundServiceSupplier, refundDeliveryAdapterSupplier,
+                settingsSupplier, queryExecutor, syncScheduler, logger
+        );
     }
 
     @Override
@@ -187,6 +200,7 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
             }
             case "claim" -> handleClaim(sender, args);
             case "review" -> handleReview(sender, args);
+            case "refund" -> refundCommandHandler.handle(sender, args);
             default -> messages().send(sender, "unknown-subcommand");
         }
 
@@ -1882,6 +1896,10 @@ public final class EchoClaimsCommand implements CommandExecutor, TabCompleter {
 
         if (args.length == 2 && args[0].equalsIgnoreCase("review")) {
             return filter(REVIEW_SUBCOMMANDS, args[1]);
+        }
+
+        if (args.length == 2 && args[0].equalsIgnoreCase("refund")) {
+            return filter(RefundCommandHandler.REFUND_SUBCOMMANDS, args[1]);
         }
 
         return List.of();

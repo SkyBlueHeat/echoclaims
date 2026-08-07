@@ -2,6 +2,7 @@ package io.github.skyblueheat.echoclaims.config;
 
 import io.github.skyblueheat.echoclaims.domain.item.ItemScoreWeights;
 
+import io.github.skyblueheat.echoclaims.application.RefundServiceConfig;
 import io.github.skyblueheat.echoclaims.application.ReviewServiceConfig;
 
 import java.time.Duration;
@@ -40,7 +41,12 @@ public record EchoClaimsSettings(
         int reviewMaxActiveReviewsPerStaff,
         Duration reviewPlayerResponseCooldown,
         boolean reviewRequireAssignmentForMutations,
-        boolean reviewAllowPlayerCancelAfterReviewStart
+        boolean reviewAllowPlayerCancelAfterReviewStart,
+        boolean refundsEnabled,
+        boolean refundPlayerSelfClaim,
+        boolean refundAutoDeliverOnLogin,
+        int refundMaxItemsPerExecution,
+        boolean refundRetryFailedRefunds
 ) {
 
     public EchoClaimsSettings {
@@ -82,6 +88,7 @@ public record EchoClaimsSettings(
         reviewPlayerResponseCooldown = reviewPlayerResponseCooldown == null
                 ? Duration.ofSeconds(0)
                 : reviewPlayerResponseCooldown;
+        refundMaxItemsPerExecution = Math.max(1, Math.min(refundMaxItemsPerExecution, 1_000));
     }
 
     private static String validateSqliteFile(String value) {
@@ -125,6 +132,16 @@ public record EchoClaimsSettings(
                 reviewMaxFinalSummaryLength,
                 reviewMaxItemNoteLength,
                 reviewMaxItemDecisionsPerClaim
+        );
+    }
+
+    public RefundServiceConfig refundServiceConfig() {
+        return new RefundServiceConfig(
+                refundsEnabled,
+                refundPlayerSelfClaim,
+                refundAutoDeliverOnLogin,
+                refundMaxItemsPerExecution,
+                refundRetryFailedRefunds
         );
     }
 

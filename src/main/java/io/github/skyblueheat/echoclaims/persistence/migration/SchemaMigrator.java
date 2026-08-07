@@ -283,6 +283,127 @@ public final class SchemaMigrator {
                     CREATE INDEX IF NOT EXISTS idx_review_decisions_evidence_ref
                     ON claim_review_item_decisions(evidence_item_reference)
                     """
+            )),
+            new Migration(6, "refund foundation: refunds, refund items, and refund audit entries", List.of(
+                    """
+                    CREATE TABLE IF NOT EXISTS refunds (
+                        id TEXT PRIMARY KEY,
+                        claim_id TEXT NOT NULL,
+                        review_id TEXT NOT NULL,
+                        player_uuid TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'PENDING',
+                        created_at INTEGER NOT NULL,
+                        completed_at INTEGER NOT NULL DEFAULT 0,
+                        version INTEGER NOT NULL DEFAULT 0,
+                        metadata TEXT NOT NULL DEFAULT '',
+                        FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE RESTRICT,
+                        FOREIGN KEY (review_id) REFERENCES claim_reviews(id) ON DELETE RESTRICT,
+                        UNIQUE(review_id)
+                    )
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refunds_claim_id
+                    ON refunds(claim_id)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refunds_player_uuid
+                    ON refunds(player_uuid)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refunds_status
+                    ON refunds(status)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refunds_player_status
+                    ON refunds(player_uuid, status)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refunds_created_at
+                    ON refunds(created_at DESC)
+                    """,
+                    """
+                    CREATE TABLE IF NOT EXISTS refund_items (
+                        id TEXT PRIMARY KEY,
+                        refund_id TEXT NOT NULL,
+                        claim_id TEXT NOT NULL,
+                        review_id TEXT NOT NULL,
+                        player_uuid TEXT NOT NULL,
+                        evidence_item_reference TEXT NOT NULL,
+                        source_snapshot_id TEXT NOT NULL,
+                        material_key TEXT NOT NULL,
+                        refundable_quantity INTEGER NOT NULL,
+                        delivered_quantity INTEGER NOT NULL DEFAULT 0,
+                        serialized_item_data TEXT NOT NULL DEFAULT '',
+                        status TEXT NOT NULL DEFAULT 'PENDING',
+                        failure_reason TEXT NOT NULL DEFAULT '',
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        version INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY (refund_id) REFERENCES refunds(id) ON DELETE RESTRICT,
+                        FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE RESTRICT,
+                        FOREIGN KEY (review_id) REFERENCES claim_reviews(id) ON DELETE RESTRICT,
+                        UNIQUE(refund_id, evidence_item_reference)
+                    )
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refund_items_refund_id
+                    ON refund_items(refund_id)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refund_items_claim_id
+                    ON refund_items(claim_id)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refund_items_player_uuid
+                    ON refund_items(player_uuid)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refund_items_status
+                    ON refund_items(status)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refund_items_evidence_ref
+                    ON refund_items(evidence_item_reference)
+                    """,
+                    """
+                    CREATE TABLE IF NOT EXISTS refund_audit_entries (
+                        id TEXT PRIMARY KEY,
+                        refund_id TEXT NOT NULL,
+                        claim_id TEXT NOT NULL,
+                        review_id TEXT NOT NULL,
+                        player_uuid TEXT NOT NULL,
+                        actor_uuid TEXT,
+                        action TEXT NOT NULL,
+                        refund_item_id TEXT,
+                        quantity INTEGER NOT NULL DEFAULT 0,
+                        reason TEXT NOT NULL DEFAULT '',
+                        recorded_at INTEGER NOT NULL,
+                        metadata TEXT NOT NULL DEFAULT '',
+                        FOREIGN KEY (refund_id) REFERENCES refunds(id) ON DELETE RESTRICT,
+                        FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE RESTRICT,
+                        FOREIGN KEY (review_id) REFERENCES claim_reviews(id) ON DELETE RESTRICT
+                    )
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refund_audit_refund_id
+                    ON refund_audit_entries(refund_id)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refund_audit_claim_id
+                    ON refund_audit_entries(claim_id)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refund_audit_player_uuid
+                    ON refund_audit_entries(player_uuid)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refund_audit_recorded_at
+                    ON refund_audit_entries(recorded_at DESC)
+                    """,
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_refund_audit_action
+                    ON refund_audit_entries(action)
+                    """
             ))
     );
 

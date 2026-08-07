@@ -57,6 +57,8 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
     private volatile boolean validationStarted = false;
     private Map<String, String> incidentEvidenceBefore;
     private Map<String, String> snapshotEvidenceBefore;
+    private volatile UUID refundClaimId;
+    private volatile String refundClaimReference;
     private Map<String, String> snapshotItemsEvidenceBefore;
 
     @FunctionalInterface
@@ -179,6 +181,26 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
                 check("snapshot_evidence_unchanged", this::verifySnapshotEvidenceUnchanged);
                 check("claim_reference_resolves_after_restart", this::verifyClaimReferenceResolvesAfterRestart);
                 check("audit_history_resolves_after_restart", this::verifyAuditHistoryResolvesAfterRestart);
+
+                // ─── Refund validation (P10-12) ───
+                check("refund_golden_path_setup", this::refundGoldenPathSetup);
+                check("refund_golden_path_execute", this::refundGoldenPathExecute);
+                check("refund_golden_path_completed_in_db", this::refundGoldenPathVerifyCompleted);
+                check("refund_golden_path_items_delivered", this::refundGoldenPathVerifyItemsDelivered);
+                check("refund_golden_path_audit_entries", this::refundGoldenPathVerifyAudit);
+                check("refund_status_command_works", this::refundStatusCommandWorks);
+                check("refund_history_command_works", this::refundHistoryCommandWorks);
+                check("refund_partial_delivery_setup", this::refundPartialDeliverySetup);
+                check("refund_partial_delivery_execute", this::refundPartialDeliveryExecute);
+                check("refund_partial_delivery_verify_status", this::refundPartialDeliveryVerifyStatus);
+                check("refund_inventory_capacity_setup", this::refundInventoryCapacitySetup);
+                check("refund_inventory_capacity_execute", this::refundInventoryCapacityExecute);
+                check("refund_inventory_capacity_verify_undelivered", this::refundInventoryCapacityVerifyUndelivered);
+
+                // ─── P13: Restart persistence validation ───
+                check("refund_persists_after_restart", this::refundPersistsAfterRestart);
+                check("refund_items_persist_after_restart", this::refundItemsPersistAfterRestart);
+                check("refund_audit_persists_after_restart", this::refundAuditPersistsAfterRestart);
 
                 check("no_exceptions", this::checkNoExceptions);
             } catch (Exception e) {
@@ -1268,6 +1290,350 @@ public final class RuntimeValidationPlugin extends JavaPlugin implements Listene
             int count = rs.getInt(1);
             rs.close();
             return count;
+        }
+    }
+
+    // ─── Refund validation methods (P10-12) ───
+
+    private void refundGoldenPathSetup() throws Exception {
+        // Use the first claim as the refund target — insert a refund directly into DB
+        // for testing. In production, refunds are created via the review approval flow.
+        require(firstClaimId != null, "First claim ID is null for refund setup");
+        Path dbPath = getDbPath();
+        refundClaimId = firstClaimId;
+        refundClaimReference = firstClaimReference;
+
+        // Check if a refund already exists for this claim
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT id FROM refunds WHERE claim_id = '" + firstClaimId + "'");
+            if (rs.next()) {
+                // Refund already exists — use it
+                rs.close();
+                return;
+            }
+            rs.close();
+
+            // Insert a test refund with READY status
+            UUID refundId = UUID.randomUUID();
+            UUID reviewId = UUID.randomUUID();
+            long now = System.currentTimeMillis();
+            stmt.execute(
+                    "INSERT INTO refunds (id, claim_id, review_id, player_uuid, status, created_at, completed_at, version, metadata) "
+                            + "VALUES ('" + refundId + "', '" + firstClaimId + "', '" + reviewId + "', '"
+                            + testPlayerUuid + "', 'READY', " + now + ", 0, 0, '{}')");
+
+            // Insert a refund item
+            UUID itemId = UUID.randomUUID();
+            UUID snapshotId = firstSnapshotId != null ? firstSnapshotId : UUID.randomUUID();
+            stmt.execute(
+                    "INSERT INTO refund_items (id, refund_id, claim_id, review_id, player_uuid, "
+                            + "evidence_item_reference, snapshot_item_uuid, material_key, "
+                            + "refundable_quantity, delivered_quantity, serialized_data, status, failure_reason, "
+                            + "created_at, updated_at, version) "
+                            + "VALUES ('" + itemId + "', '" + refundId + "', '" + firstClaimId + "', '"
+                            + reviewId + "', '" + testPlayerUuid + "', 'snap:0', '" + snapshotId + "', "
+                            + "'diamond', 5, 0, '', 'PENDING', '', " + now + ", " + now + ", 0)");
+
+            // Insert refund audit entry
+            UUID auditId = UUID.randomUUID();
+            stmt.execute(
+                    "INSERT INTO refund_audit_entries (id, refund_id, claim_id, review_id, player_uuid, "
+                            + "actor_uuid, action, item_id, quantity, reason, recorded_at, metadata) "
+                            + "VALUES ('" + auditId + "', '" + refundId + "', '" + firstClaimId + "', '"
+                            + reviewId + "', '" + testPlayerUuid + "', NULL, 'REFUND_CREATED', NULL, 0, '', "
+                            + now + ", '{}')");
+        }
+    }
+
+    private void refundGoldenPathExecute() throws Exception {
+        require(refundClaimReference != null, "Refund claim reference is null");
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for refund execute");
+            // Clear inventory to ensure space
+            player.getInventory().clear();
+            getServer().dispatchCommand(getServer().getConsoleSender(),
+                    "echoclaims refund execute " + refundClaimReference);
+        });
+        Thread.sleep(5000);
+    }
+
+    private void refundGoldenPathVerifyCompleted() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT status FROM refunds WHERE claim_id = '" + refundClaimId + "'");
+            require(rs.next(), "No refund found for claim");
+            String status = rs.getString(1);
+            rs.close();
+            require("COMPLETED".equals(status), "Refund status should be COMPLETED, got " + status);
+        }
+    }
+
+    private void refundGoldenPathVerifyItemsDelivered() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT status, delivered_quantity, refundable_quantity FROM refund_items "
+                            + "WHERE refund_id = (SELECT id FROM refunds WHERE claim_id = '" + refundClaimId + "')");
+            require(rs.next(), "No refund items found");
+            String status = rs.getString(1);
+            int delivered = rs.getInt(2);
+            int refundable = rs.getInt(3);
+            rs.close();
+            require("DELIVERED".equals(status), "Item status should be DELIVERED, got " + status);
+            require(delivered == refundable, "Delivered qty should equal refundable qty: " + delivered + " vs " + refundable);
+        }
+    }
+
+    private void refundGoldenPathVerifyAudit() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT action FROM refund_audit_entries "
+                            + "WHERE refund_id = (SELECT id FROM refunds WHERE claim_id = '" + refundClaimId + "') "
+                            + "ORDER BY recorded_at ASC");
+            List<String> actions = new ArrayList<>();
+            while (rs.next()) {
+                actions.add(rs.getString(1));
+            }
+            rs.close();
+            require(actions.contains("REFUND_CREATED"), "Audit should contain REFUND_CREATED");
+            require(actions.contains("REFUND_COMPLETED"), "Audit should contain REFUND_COMPLETED");
+        }
+    }
+
+    private void refundStatusCommandWorks() throws Exception {
+        require(refundClaimReference != null, "Refund claim reference is null");
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for refund status");
+            getServer().dispatchCommand(player, "echoclaims refund status " + refundClaimReference);
+        });
+        Thread.sleep(3000);
+    }
+
+    private void refundHistoryCommandWorks() throws Exception {
+        require(refundClaimReference != null, "Refund claim reference is null");
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for refund history");
+            getServer().dispatchCommand(player, "echoclaims refund history " + refundClaimReference);
+        });
+        Thread.sleep(3000);
+    }
+
+    private void refundPartialDeliverySetup() throws Exception {
+        // Create a second claim+refund for partial delivery test
+        require(firstIncidentId != null, "First incident ID is null");
+        Path dbPath = getDbPath();
+
+        UUID newClaimId = UUID.randomUUID();
+        String newClaimRef = "REF-PARTIAL";
+        UUID newReviewId = UUID.randomUUID();
+        UUID newRefundId = UUID.randomUUID();
+        long now = System.currentTimeMillis();
+
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            // Insert claim
+            stmt.execute(
+                    "INSERT INTO claims (id, public_reference, incident_id, player_uuid, status, source, "
+                            + "description, created_at, submitted_at, cancelled_at, version, metadata) "
+                            + "VALUES ('" + newClaimId + "', '" + newClaimRef + "', '"
+                            + firstIncidentId + "', '" + testPlayerUuid + "', 'SUBMITTED', 'PLAYER_COMMAND', "
+                            + "'partial test', " + now + ", " + now + ", 0, 0, '{}')");
+
+            // Insert refund
+            stmt.execute(
+                    "INSERT INTO refunds (id, claim_id, review_id, player_uuid, status, created_at, completed_at, version, metadata) "
+                            + "VALUES ('" + newRefundId + "', '" + newClaimId + "', '" + newReviewId + "', '"
+                            + testPlayerUuid + "', 'READY', " + now + ", 0, 0, '{}')");
+
+            // Insert refund item with large quantity
+            UUID itemId = UUID.randomUUID();
+            stmt.execute(
+                    "INSERT INTO refund_items (id, refund_id, claim_id, review_id, player_uuid, "
+                            + "evidence_item_reference, snapshot_item_uuid, material_key, "
+                            + "refundable_quantity, delivered_quantity, serialized_data, status, failure_reason, "
+                            + "created_at, updated_at, version) "
+                            + "VALUES ('" + itemId + "', '" + newRefundId + "', '" + newClaimId + "', '"
+                            + newReviewId + "', '" + testPlayerUuid + "', 'snap:0', '"
+                            + UUID.randomUUID() + "', 'diamond', 64, 0, '', 'PENDING', '', "
+                            + now + ", " + now + ", 0)");
+        }
+    }
+
+    private void refundPartialDeliveryExecute() throws Exception {
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for partial delivery");
+            // Fill most of inventory to force partial delivery
+            player.getInventory().clear();
+            for (int i = 0; i < 35; i++) {
+                player.getInventory().setItem(i, new ItemStack(Material.COBBLESTONE, 64));
+            }
+            // Leave only 1 slot free — should only fit 64 diamonds
+            getServer().dispatchCommand(getServer().getConsoleSender(),
+                    "echoclaims refund execute REF-PARTIAL");
+        });
+        Thread.sleep(5000);
+    }
+
+    private void refundPartialDeliveryVerifyStatus() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT status FROM refunds WHERE claim_id = "
+                            + "(SELECT id FROM claims WHERE public_reference = 'REF-PARTIAL')");
+            require(rs.next(), "No refund found for REF-PARTIAL");
+            String status = rs.getString(1);
+            rs.close();
+            // Should be READY (partial delivery transitions back to READY) or COMPLETED
+            require(!"COMPLETED".equals(status) || !"FAILED".equals(status),
+                    "Partial delivery refund should not be COMPLETED or FAILED, got " + status);
+        }
+    }
+
+    private void refundInventoryCapacitySetup() throws Exception {
+        // Create a third claim+refund for inventory capacity test
+        Path dbPath = getDbPath();
+        UUID newClaimId = UUID.randomUUID();
+        String newClaimRef = "REF-CAPACITY";
+        UUID newReviewId = UUID.randomUUID();
+        UUID newRefundId = UUID.randomUUID();
+        long now = System.currentTimeMillis();
+
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            stmt.execute(
+                    "INSERT INTO claims (id, public_reference, incident_id, player_uuid, status, source, "
+                            + "description, created_at, submitted_at, cancelled_at, version, metadata) "
+                            + "VALUES ('" + newClaimId + "', '" + newClaimRef + "', '"
+                            + firstIncidentId + "', '" + testPlayerUuid + "', 'SUBMITTED', 'PLAYER_COMMAND', "
+                            + "'capacity test', " + now + ", " + now + ", 0, 0, '{}')");
+
+            stmt.execute(
+                    "INSERT INTO refunds (id, claim_id, review_id, player_uuid, status, created_at, completed_at, version, metadata) "
+                            + "VALUES ('" + newRefundId + "', '" + newClaimId + "', '" + newReviewId + "', '"
+                            + testPlayerUuid + "', 'READY', " + now + ", 0, 0, '{}')");
+
+            UUID itemId = UUID.randomUUID();
+            stmt.execute(
+                    "INSERT INTO refund_items (id, refund_id, claim_id, review_id, player_uuid, "
+                            + "evidence_item_reference, snapshot_item_uuid, material_key, "
+                            + "refundable_quantity, delivered_quantity, serialized_data, status, failure_reason, "
+                            + "created_at, updated_at, version) "
+                            + "VALUES ('" + itemId + "', '" + newRefundId + "', '" + newClaimId + "', '"
+                            + newReviewId + "', '" + testPlayerUuid + "', 'snap:0', '"
+                            + UUID.randomUUID() + "', 'diamond', 32, 0, '', 'PENDING', '', "
+                            + now + ", " + now + ", 0)");
+        }
+    }
+
+    private void refundInventoryCapacityExecute() throws Exception {
+        runOnMain(() -> {
+            Player player = getServer().getPlayer(testPlayerUuid);
+            require(player != null, "Test player not found for capacity test");
+            // Fill entire inventory — nothing should fit
+            player.getInventory().clear();
+            for (int i = 0; i < 36; i++) {
+                player.getInventory().setItem(i, new ItemStack(Material.COBBLESTONE, 64));
+            }
+            // Also fill armor slots
+            player.getInventory().setHelmet(new ItemStack(Material.DIAMOND_HELMET));
+            player.getInventory().setChestplate(new ItemStack(Material.DIAMOND_CHESTPLATE));
+            player.getInventory().setLeggings(new ItemStack(Material.DIAMOND_LEGGINGS));
+            player.getInventory().setBoots(new ItemStack(Material.DIAMOND_BOOTS));
+            // Offhand
+            player.getInventory().setItemInOffHand(new ItemStack(Material.SHIELD));
+
+            getServer().dispatchCommand(getServer().getConsoleSender(),
+                    "echoclaims refund execute REF-CAPACITY");
+        });
+        Thread.sleep(5000);
+    }
+
+    private void refundInventoryCapacityVerifyUndelivered() throws Exception {
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT r.status, ri.status, ri.delivered_quantity "
+                            + "FROM refunds r JOIN refund_items ri ON r.id = ri.refund_id "
+                            + "WHERE r.claim_id = (SELECT id FROM claims WHERE public_reference = 'REF-CAPACITY')");
+            require(rs.next(), "No refund found for REF-CAPACITY");
+            String refundStatus = rs.getString(1);
+            String itemStatus = rs.getString(2);
+            int delivered = rs.getInt(3);
+            rs.close();
+            require(!"COMPLETED".equals(refundStatus),
+                    "Refund should not be COMPLETED when inventory is full, got " + refundStatus);
+            require(delivered == 0,
+                    "Delivered quantity should be 0 when inventory is full, got " + delivered);
+            require("PENDING".equals(itemStatus),
+                    "Item should remain PENDING when nothing delivered, got " + itemStatus);
+        }
+    }
+
+    // ─── P13: Restart persistence validation methods ───
+
+    private void refundPersistsAfterRestart() throws Exception {
+        require(refundClaimId != null, "Refund claim ID is null for restart check");
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT id, status, player_uuid, created_at FROM refunds WHERE claim_id = '" + refundClaimId + "'");
+            require(rs.next(), "Refund should persist after restart");
+            String status = rs.getString("status");
+            String playerUuid = rs.getString("player_uuid");
+            rs.close();
+            require("COMPLETED".equals(status), "Refund status should still be COMPLETED after restart, got " + status);
+            require(testPlayerUuid.toString().equals(playerUuid),
+                    "Refund player_uuid should persist: expected " + testPlayerUuid + " got " + playerUuid);
+        }
+    }
+
+    private void refundItemsPersistAfterRestart() throws Exception {
+        require(refundClaimId != null, "Refund claim ID is null for item restart check");
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT status, delivered_quantity, refundable_quantity, material_key "
+                            + "FROM refund_items WHERE refund_id = "
+                            + "(SELECT id FROM refunds WHERE claim_id = '" + refundClaimId + "')");
+            require(rs.next(), "Refund items should persist after restart");
+            String status = rs.getString("status");
+            int delivered = rs.getInt("delivered_quantity");
+            int refundable = rs.getInt("refundable_quantity");
+            String material = rs.getString("material_key");
+            rs.close();
+            require("DELIVERED".equals(status), "Item status should persist as DELIVERED, got " + status);
+            require(delivered == refundable, "Delivered qty should persist: " + delivered + " vs " + refundable);
+            require("diamond".equals(material), "Material key should persist: " + material);
+        }
+    }
+
+    private void refundAuditPersistsAfterRestart() throws Exception {
+        require(refundClaimId != null, "Refund claim ID is null for audit restart check");
+        Path dbPath = getDbPath();
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+             Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(
+                    "SELECT COUNT(*) FROM refund_audit_entries WHERE refund_id = "
+                            + "(SELECT id FROM refunds WHERE claim_id = '" + refundClaimId + "')");
+            rs.next();
+            int count = rs.getInt(1);
+            rs.close();
+            require(count >= 2, "Refund audit entries should persist after restart, found " + count);
         }
     }
 

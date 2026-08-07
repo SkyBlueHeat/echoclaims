@@ -26,7 +26,7 @@ class DatabaseManagerTest {
                 tempDir.resolve("a/b/c/nested.db"));
         database.initialize();
         assertTrue(database.healthy());
-        assertEquals(5, database.schemaVersion());
+        assertEquals(6, database.schemaVersion());
     }
 
     @Test
@@ -119,7 +119,7 @@ class DatabaseManagerTest {
         int first = database.initialize();
         int second = database.initialize();
 
-        assertEquals(5, first);
+        assertEquals(6, first);
         assertEquals(0, second);
         assertEquals(SchemaMigrator.latestVersion(), database.schemaVersion());
     }

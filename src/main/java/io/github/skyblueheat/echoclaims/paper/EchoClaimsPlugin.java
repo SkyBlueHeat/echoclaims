@@ -11,6 +11,8 @@ import io.github.skyblueheat.echoclaims.application.EvidenceLookupService;
 import io.github.skyblueheat.echoclaims.application.EvidenceMetrics;
 import io.github.skyblueheat.echoclaims.application.EvidencePersistenceService;
 import io.github.skyblueheat.echoclaims.application.ItemValueScorer;
+import io.github.skyblueheat.echoclaims.application.RefundDeliveryAdapter;
+import io.github.skyblueheat.echoclaims.application.RefundService;
 import io.github.skyblueheat.echoclaims.application.ReviewEvidenceSelectionSession;
 import io.github.skyblueheat.echoclaims.application.ReviewMetrics;
 import io.github.skyblueheat.echoclaims.application.ReviewService;
@@ -23,6 +25,11 @@ import io.github.skyblueheat.echoclaims.integration.ItemSerializer;
 import io.github.skyblueheat.echoclaims.integration.bukkit.BukkitItemSerializer;
 import io.github.skyblueheat.echoclaims.integration.vanilla.VanillaEntityProvider;
 import io.github.skyblueheat.echoclaims.integration.vanilla.VanillaItemProvider;
+import io.github.skyblueheat.echoclaims.persistence.SqliteRefundAuditRepository;
+import io.github.skyblueheat.echoclaims.persistence.SqliteRefundItemRepository;
+import io.github.skyblueheat.echoclaims.persistence.SqliteRefundRepository;
+import io.github.skyblueheat.echoclaims.persistence.SqliteRefundStore;
+import io.github.skyblueheat.echoclaims.paper.refund.PaperRefundDeliveryAdapter;
 import io.github.skyblueheat.echoclaims.paper.command.EchoClaimsCommand;
 import io.github.skyblueheat.echoclaims.paper.config.BukkitConfigurationSource;
 import io.github.skyblueheat.echoclaims.paper.listener.DeathCaptureService;
@@ -39,6 +46,10 @@ import io.github.skyblueheat.echoclaims.persistence.DatabaseManager;
 import io.github.skyblueheat.echoclaims.persistence.EvidenceStore;
 import io.github.skyblueheat.echoclaims.persistence.IncidentRepository;
 import io.github.skyblueheat.echoclaims.persistence.InventorySnapshotRepository;
+import io.github.skyblueheat.echoclaims.persistence.RefundAuditRepository;
+import io.github.skyblueheat.echoclaims.persistence.RefundItemRepository;
+import io.github.skyblueheat.echoclaims.persistence.RefundRepository;
+import io.github.skyblueheat.echoclaims.persistence.RefundStore;
 import io.github.skyblueheat.echoclaims.persistence.SqliteAuditRecordRepository;
 import io.github.skyblueheat.echoclaims.persistence.SqliteClaimReviewCommentRepository;
 import io.github.skyblueheat.echoclaims.persistence.SqliteClaimReviewItemDecisionRepository;
@@ -78,6 +89,8 @@ public final class EchoClaimsPlugin extends JavaPlugin {
     private volatile ReviewService reviewService;
     private volatile ReviewEvidenceSelectionSession reviewEvidenceSession;
     private volatile ReviewMetrics reviewMetrics;
+    private volatile RefundService refundService;
+    private volatile RefundDeliveryAdapter refundDeliveryAdapter;
 
     private IntegrationRegistry integrations;
     private DatabaseManager databaseManager;
@@ -281,6 +294,17 @@ public final class EchoClaimsPlugin extends JavaPlugin {
                 settings.reviewEvidenceSessionMaxStaff()
         );
 
+        RefundRepository refundRepository = new SqliteRefundRepository(databaseManager);
+        RefundItemRepository refundItemRepository = new SqliteRefundItemRepository(databaseManager);
+        RefundAuditRepository refundAuditRepository = new SqliteRefundAuditRepository(databaseManager);
+        RefundStore refundStore = new SqliteRefundStore(databaseManager);
+        refundService = new RefundService(
+                refundRepository, refundItemRepository, refundAuditRepository, refundStore,
+                reviewRepository, decisionRepository, snapshotRepository,
+                settings.refundServiceConfig()
+        );
+        refundDeliveryAdapter = new PaperRefundDeliveryAdapter(itemSerializer, getLogger());
+
         statusService = new StatusService(
                 () -> settings,
                 databaseManager,
@@ -325,6 +349,8 @@ public final class EchoClaimsPlugin extends JavaPlugin {
                 () -> reviewService,
                 () -> reviewEvidenceSession,
                 () -> reviewMetrics,
+                () -> refundService,
+                () -> refundDeliveryAdapter,
                 () -> settings,
                 queryExecutor,
                 runnable -> getServer().getScheduler().runTask(this, runnable),

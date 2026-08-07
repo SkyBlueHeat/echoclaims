@@ -8,7 +8,7 @@ load: POSTWORLD
 commands:
   echoclaims:
     description: EchoClaims administration and claim command
-    usage: /echoclaims <status|incidents|incident|snapshot|claim|review>
+    usage: /echoclaims <status|incidents|incident|snapshot|claim|review|refund>
     aliases: [ec]
     permission: echoclaims.command.status
 permissions:
@@ -86,4 +86,22 @@ permissions:
     default: op
   echoclaims.claim.respond:
     description: Allows responding to a staff information request
+    default: true
+  echoclaims.staff.refund.status:
+    description: Allows viewing refund status for any claim
+    default: op
+  echoclaims.staff.refund.execute:
+    description: Allows executing refund delivery for any claim
+    default: op
+  echoclaims.staff.refund.history:
+    description: Allows viewing refund audit history
+    default: op
+  echoclaims.staff.refund.retry:
+    description: Allows retrying a failed refund
+    default: op
+  echoclaims.refund.pending:
+    description: Allows viewing own pending refunds
+    default: true
+  echoclaims.refund.claim:
+    description: Allows claiming own pending refunds
     default: true

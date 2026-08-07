@@ -1,5 +1,6 @@
 package io.github.skyblueheat.echoclaims.config;
 
+import io.github.skyblueheat.echoclaims.application.RefundServiceConfig;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -71,5 +72,78 @@ class SettingsLoaderTest {
         )));
 
         assertEquals("<gray>[Test]</gray> ", result.settings().messagePrefix());
+    }
+
+    @Test
+    void refundDefaultsAreSensible() {
+        EchoClaimsSettings settings = EchoClaimsSettings.defaults();
+
+        assertTrue(settings.refundsEnabled());
+        assertTrue(settings.refundPlayerSelfClaim());
+        assertFalse(settings.refundAutoDeliverOnLogin());
+        assertEquals(100, settings.refundMaxItemsPerExecution());
+        assertTrue(settings.refundRetryFailedRefunds());
+    }
+
+    @Test
+    void refundSettingsAreReadFromConfiguration() {
+        SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
+                "refunds", Map.of(
+                        "enabled", false,
+                        "player-self-claim", false,
+                        "auto-deliver-on-login", true,
+                        "max-items-per-execution", 50,
+                        "retry-failed-refunds", false
+                )
+        )));
+
+        EchoClaimsSettings settings = result.settings();
+        assertFalse(settings.refundsEnabled());
+        assertFalse(settings.refundPlayerSelfClaim());
+        assertTrue(settings.refundAutoDeliverOnLogin());
+        assertEquals(50, settings.refundMaxItemsPerExecution());
+        assertFalse(settings.refundRetryFailedRefunds());
+    }
+
+    @Test
+    void refundMaxItemsClampedToMinimum() {
+        SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
+                "refunds", Map.of("max-items-per-execution", 0)
+        )));
+
+        assertEquals(1, result.settings().refundMaxItemsPerExecution());
+        assertTrue(result.hasWarnings());
+    }
+
+    @Test
+    void refundMaxItemsClampedToMaximum() {
+        SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
+                "refunds", Map.of("max-items-per-execution", 100_000)
+        )));
+
+        assertEquals(1_000, result.settings().refundMaxItemsPerExecution());
+        assertTrue(result.hasWarnings());
+    }
+
+    @Test
+    void refundServiceConfigMatchesSettings() {
+        SettingsLoadResult result = SettingsLoader.load(new MapConfigurationSource(Map.of(
+                "refunds", Map.of(
+                        "enabled", true,
+                        "player-self-claim", false,
+                        "auto-deliver-on-login", true,
+                        "max-items-per-execution", 25,
+                        "retry-failed-refunds", false
+                )
+        )));
+
+        EchoClaimsSettings settings = result.settings();
+        RefundServiceConfig config = settings.refundServiceConfig();
+
+        assertTrue(config.enabled());
+        assertFalse(config.playerSelfClaim());
+        assertTrue(config.autoDeliverOnLogin());
+        assertEquals(25, config.maxItemsPerExecution());
+        assertFalse(config.retryFailedRefunds());
     }
 }

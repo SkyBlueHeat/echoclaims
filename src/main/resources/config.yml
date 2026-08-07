@@ -115,3 +115,17 @@ reviews:
   require-assignment-for-mutations: true
   # When false, players cannot cancel a claim once it is UNDER_REVIEW or WAITING_FOR_PLAYER.
   allow-player-cancel-after-review-start: false
+
+refunds:
+  # Enable or disable the refund system entirely.
+  enabled: true
+  # Allow players to claim their own refunds via /ec refund claim <ref>.
+  player-self-claim: true
+  # Automatically deliver pending refunds when the player logs in.
+  # Requires the player to be online; offline players are skipped.
+  auto-deliver-on-login: false
+  # Maximum number of refund items processed in a single delivery execution.
+  # Higher values mean more items per transaction but longer delivery time.
+  max-items-per-execution: 100
+  # Allow staff to retry failed refunds via /ec refund retry <ref>.
+  retry-failed-refunds: true

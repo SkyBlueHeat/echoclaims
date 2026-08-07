@@ -78,6 +78,8 @@ class EchoClaimsCommandTest {
                 () -> null,
                 () -> null,
                 () -> null,
+                () -> null,
+                () -> null,
                 () -> io.github.skyblueheat.echoclaims.config.EchoClaimsSettings.defaults(),
                 queryExecutor,
                 runnable -> syncTasks.add(runnable),
@@ -277,7 +279,53 @@ class EchoClaimsCommandTest {
     @Test
     void tabCompleteWithNoPrefixReturnsAllSubcommands() {
         List<String> completions = command.onTabComplete(authorizedPlayer, null, "echoclaims", new String[]{""});
+        assertEquals(7, completions.size());
+    }
+
+    @Test
+    void refundWithNoSubcommandShowsUsage() {
+        command.onCommand(authorizedPlayer, null, "echoclaims", new String[]{"refund"});
+        assertEquals("refund-usage", messages.lastKey);
+    }
+
+    @Test
+    void refundWithUnknownSubcommandShowsUnknownMessage() {
+        command.onCommand(authorizedPlayer, null, "echoclaims", new String[]{"refund", "frobnicate"});
+        assertEquals("not-ready", messages.lastKey);
+    }
+
+    @Test
+    void refundServiceNotReadyShowsNotReady() {
+        command.onCommand(authorizedPlayer, null, "echoclaims", new String[]{"refund", "status", "REF-001"});
+        assertEquals("not-ready", messages.lastKey);
+    }
+
+    @Test
+    void refundTabCompleteReturnsAllSubcommandsForNoPrefix() {
+        List<String> completions = command.onTabComplete(authorizedPlayer, null, "echoclaims",
+                new String[]{"refund", ""});
         assertEquals(6, completions.size());
+        assertTrue(completions.contains("status"));
+        assertTrue(completions.contains("execute"));
+        assertTrue(completions.contains("history"));
+        assertTrue(completions.contains("retry"));
+        assertTrue(completions.contains("pending"));
+        assertTrue(completions.contains("claim"));
+    }
+
+    @Test
+    void refundTabCompleteFiltersByPrefix() {
+        List<String> completions = command.onTabComplete(authorizedPlayer, null, "echoclaims",
+                new String[]{"refund", "st"});
+        assertEquals(1, completions.size());
+        assertEquals("status", completions.get(0));
+    }
+
+    @Test
+    void refundTabCompleteReturnsEmptyForThirdArg() {
+        List<String> completions = command.onTabComplete(authorizedPlayer, null, "echoclaims",
+                new String[]{"refund", "status", "x"});
+        assertTrue(completions.isEmpty());
     }
 
     @Test

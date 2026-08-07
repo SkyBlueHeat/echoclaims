@@ -88,6 +88,8 @@ class ReviewCommandTest {
                 () -> reviewService,
                 () -> evidenceSession,
                 () -> new ReviewMetrics(),
+                () -> null,
+                () -> null,
                 () -> EchoClaimsSettings.defaults(),
                 queryExecutor,
                 runnable -> syncTasks.add(runnable),

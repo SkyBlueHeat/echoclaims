@@ -54,9 +54,9 @@ class MigrationV2Test {
     }
 
     @Test
-    void latestVersionIs5() {
-        assertEquals(5, SchemaMigrator.latestVersion());
-        assertEquals(5, SchemaMigrator.migrations().size());
+    void latestVersionIs6() {
+        assertEquals(6, SchemaMigrator.latestVersion());
+        assertEquals(6, SchemaMigrator.migrations().size());
     }
 
     @Test
