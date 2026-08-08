@@ -315,6 +315,43 @@ public final class RefundService {
      * @param adapter    the delivery adapter that performs actual inventory insertion
      * @return the execution result
      */
+    public ExecuteRefundResult executeRefundForPlayer(
+            UUID claimId,
+            UUID playerUuid,
+            RefundDeliveryAdapter adapter
+    ) {
+        Objects.requireNonNull(claimId, "claimId");
+        Objects.requireNonNull(playerUuid, "playerUuid");
+        Objects.requireNonNull(adapter, "adapter");
+
+        try {
+            Optional<Refund> refundOpt = refundRepository.findByClaimId(claimId);
+            if (refundOpt.isEmpty()) {
+                return ExecuteRefundResult.rejected("No refund found for this claim");
+            }
+            Refund refund = refundOpt.get();
+            if (!refund.playerUuid().equals(playerUuid)) {
+                return ExecuteRefundResult.notOwned();
+            }
+        } catch (SQLException e) {
+            return ExecuteRefundResult.error(e.getMessage());
+        }
+        return executeRefund(claimId, playerUuid, adapter);
+    }
+
+    /**
+     * Executes a refund delivery on behalf of a staff member.
+     *
+     * <p>Staff execution does not require ownership — the actor is a staff
+     * member acting on behalf of the refund owner. Use
+     * {@link #executeRefundForPlayer} for player self-claim, which enforces
+     * ownership at the service layer.</p>
+     *
+     * @param claimId    the claim UUID
+     * @param actorUuid  the staff member executing the refund (may be null for system)
+     * @param adapter    the delivery adapter that performs actual inventory insertion
+     * @return the execution result
+     */
     public ExecuteRefundResult executeRefund(
             UUID claimId,
             UUID actorUuid,
@@ -729,6 +766,9 @@ public final class RefundService {
         }
         static ExecuteRefundResult error(String msg) {
             return new ExecuteRefundResult(false, false, false, false, false, "Database error: " + msg, null, 0, 0, 0, 0);
+        }
+        static ExecuteRefundResult notOwned() {
+            return new ExecuteRefundResult(false, false, false, false, false, "This refund does not belong to you", null, 0, 0, 0, 0);
         }
         public boolean isSuccess() { return success; }
         public boolean isAlreadyCompleted() { return alreadyCompleted; }

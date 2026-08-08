@@ -339,21 +339,17 @@ public final class RefundCommandHandler {
         queryExecutor.submit(() -> {
             try {
                 UUID claimId = resolveClaimId(claimRef);
-                var detail = refundServiceSupplier.get().findRefundByClaimId(claimId);
-                if (detail.isEmpty()) {
-                    syncScheduler.accept(() -> messages().send(sender, "refund-not-found",
-                            Map.of("reference", claimRef)));
-                    return;
-                }
-                Refund refund = detail.get().refund();
-                if (!refund.playerUuid().equals(player.getUniqueId())) {
-                    syncScheduler.accept(() -> messages().send(sender, "refund-not-owned"));
-                    return;
-                }
                 RefundService.ExecuteRefundResult result =
-                        refundServiceSupplier.get().executeRefund(claimId, player.getUniqueId(),
-                                deliveryAdapterSupplier.get());
-                syncScheduler.accept(() -> sendExecuteResult(sender, result, claimRef));
+                        refundServiceSupplier.get().executeRefundForPlayer(
+                                claimId, player.getUniqueId(), deliveryAdapterSupplier.get());
+                syncScheduler.accept(() -> {
+                    if (result.rejectionReason().isPresent()
+                            && result.rejectionReason().get().contains("does not belong")) {
+                        messages().send(sender, "refund-not-owned");
+                        return;
+                    }
+                    sendExecuteResult(sender, result, claimRef);
+                });
             } catch (Exception e) {
                 logger.log(Level.WARNING, "Refund claim failed for " + claimRef, e);
                 syncScheduler.accept(() -> messages().send(sender, "db-error"));

@@ -378,6 +378,49 @@ class RefundCommandHandlerTest {
         assertEquals("claim-player-only", messages.lastKey);
     }
 
+    // ─── Staff commands from console (should work, not player-only) ───
+
+    @Test void statusFromConsoleWorks() throws Exception {
+        seedRefund();
+        handler.handle(consoleSender(Set.of("echoclaims.staff.refund.status")),
+                new String[]{"refund", "status", claimId.toString()});
+        awaitAsyncAndSync();
+        assertTrue(messages.sentKeys.contains("refund-status-header"));
+    }
+
+    @Test void executeFromConsoleWorks() throws Exception {
+        seedRefund();
+        handler.handle(consoleSender(Set.of("echoclaims.staff.refund.execute")),
+                new String[]{"refund", "execute", claimId.toString()});
+        awaitAsyncAndSync();
+        assertTrue(messages.sentKeys.contains("refund-completed") || messages.sentKeys.contains("refund-rejected"));
+    }
+
+    @Test void historyFromConsoleWorks() throws Exception {
+        seedRefund();
+        handler.handle(consoleSender(Set.of("echoclaims.staff.refund.history")),
+                new String[]{"refund", "history", claimId.toString()});
+        awaitAsyncAndSync();
+        assertTrue(messages.sentKeys.contains("refund-history-header") || messages.sentKeys.contains("refund-history-empty"));
+    }
+
+    @Test void retryFromConsoleWorks() throws Exception {
+        seedRefund();
+        handler.handle(consoleSender(Set.of("echoclaims.staff.refund.retry")),
+                new String[]{"refund", "retry", claimId.toString()});
+        awaitAsyncAndSync();
+        assertTrue(messages.sentKeys.contains("refund-retry-success") || messages.sentKeys.contains("refund-retry-rejected"));
+    }
+
+    // ─── Invalid claim reference ───
+
+    @Test void statusInvalidClaimRefShowsNotFound() throws Exception {
+        handler.handle(playerSender(playerUuid, Set.of("echoclaims.staff.refund.status")),
+                new String[]{"refund", "status", UUID.randomUUID().toString()});
+        awaitAsyncAndSync();
+        assertEquals("refund-not-found", messages.lastKey);
+    }
+
     // ─── Admin permission grants all ───
 
     @Test void adminPermissionGrantsAllRefundCommands() throws Exception {

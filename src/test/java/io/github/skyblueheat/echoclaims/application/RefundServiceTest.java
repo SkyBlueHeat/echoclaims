@@ -496,6 +496,42 @@ class RefundServiceTest {
         assertTrue(result.rejectionReason().get().contains("No refund"));
     }
 
+    // ─── Service-layer ownership enforcement ───
+
+    @Test
+    void executeRefundForPlayerRejectsNonOwner() throws Exception {
+        seedRefundWithItem(10, 0, RefundItemStatus.PENDING);
+        UUID otherPlayer = UUID.randomUUID();
+
+        RefundService.ExecuteRefundResult result =
+                refundService.executeRefundForPlayer(claimId, otherPlayer, new MockDeliveryAdapter(10));
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.rejectionReason().isPresent());
+        assertTrue(result.rejectionReason().get().contains("does not belong"));
+    }
+
+    @Test
+    void executeRefundForPlayerAllowsOwner() throws Exception {
+        seedRefundWithItem(10, 0, RefundItemStatus.PENDING);
+
+        RefundService.ExecuteRefundResult result =
+                refundService.executeRefundForPlayer(claimId, playerUuid, new MockDeliveryAdapter(10));
+
+        assertTrue(result.isSuccess());
+    }
+
+    @Test
+    void executeRefundForPlayerNoRefundReturnsRejected() {
+        UUID randomClaimId = UUID.randomUUID();
+        RefundService.ExecuteRefundResult result =
+                refundService.executeRefundForPlayer(randomClaimId, playerUuid, new MockDeliveryAdapter(1));
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.rejectionReason().isPresent());
+        assertTrue(result.rejectionReason().get().contains("No refund"));
+    }
+
     // ─── Find Refund By Claim ───
 
     @Test
