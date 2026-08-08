@@ -27,6 +27,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - `RefundStore` / `SqliteRefundStore` with atomic multi-table transactions
 - `RefundCommandHandler` — delegate for `/ec refund` subcommands:
   `status`, `execute`, `history`, `retry`, `pending`, `claim`
+- `RefundService.executeRefundForPlayer()` — service-layer ownership
+  enforcement for player self-claim (not just command handler)
 - Refund configuration: `refunds.enabled`, `refunds.player-self-claim`,
   `refunds.auto-deliver-on-login`, `refunds.max-items-per-execution`,
   `refunds.retry-failed-refunds`
@@ -42,8 +44,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   - Concurrency test matrix (8 scenarios) — `RefundStoreConcurrencyTest`
   - Atomicity failure injection tests (7 scenarios) — `RefundStoreAtomicityTest`
   - Partial delivery correctness tests — `RefundServiceTest`
+  - Service-layer ownership enforcement tests (3 scenarios) — `RefundServiceTest`
   - Paper inventory delivery test matrix (7 scenarios) — `RefundServiceTest`
-  - Command and authorization tests (23 scenarios) — `RefundCommandHandlerTest`
+  - Command and authorization tests (28 scenarios) — `RefundCommandHandlerTest`
   - Domain/refund creation rule tests (7 scenarios) — `RefundCreationRuleTest`
   - Refund aggregate completion tests (5 combinations) — `RefundCreationRuleTest`
   - ItemStack round-trip tests (14 scenarios) — `BukkitItemSerializerTest`
